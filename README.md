@@ -1,5 +1,7 @@
 # xLSTM Telemetry Assurance
 
+![xLSTM Telemetry Assurance](assets/social/github-social-card-xlstm-telemetry-assurance.png)
+
 [![CI](https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance/actions/workflows/ci.yml/badge.svg)](https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
@@ -128,6 +130,9 @@ results/benchmark/
 ```text
 xlstm-telemetry-assurance/
 ├── .github/workflows/ci.yml
+├── assets/
+│   └── social/
+│       └── github-social-card-xlstm-telemetry-assurance.png
 ├── docs/
 │   ├── findings.md
 │   ├── method.md
