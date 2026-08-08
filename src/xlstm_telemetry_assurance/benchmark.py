@@ -54,12 +54,24 @@ def _score_stream(
 ) -> dict[str, float]:
     inputs, observed_std = prepare_observed_inputs(observed, missing, mean, std)
     clean_std = standardize(clean, mean, std)
-    x, _, indices = build_windows(inputs, observed_std, seq_len)
+    x, y_observed, indices = build_windows(inputs, observed_std, seq_len)
     _, y_clean, _ = build_windows(inputs, clean_std, seq_len)
     pred_mean, pred_std = predict(model, x)
-    scores = np.mean(np.abs(y_clean - pred_mean) / np.maximum(pred_std, 1e-4), axis=1)
-    miss_step = missing[indices].any(axis=1).astype(np.float32)
+
+    # Runtime anomaly scoring uses only information actually available to the
+    # system. The clean counterfactual is retained only for benchmark metrics.
+    standardized_residual = np.abs(y_observed - pred_mean) / np.maximum(pred_std, 1e-4)
+    target_missing = missing[indices]
+    available = ~target_missing
+    residual_sum = np.sum(standardized_residual * available, axis=1)
+    available_count = np.maximum(np.sum(available, axis=1), 1)
+    scores = residual_sum / available_count
+
+    # Missing measurements are explicit telemetry faults. Their forward-filled
+    # values are excluded from the residual and missingness is scored directly.
+    miss_step = target_missing.any(axis=1).astype(np.float32)
     scores = scores + 4.0 * miss_step
+
     labels = fault_mask[indices].astype(np.int64)
     preds = (scores > threshold).astype(np.int64)
     metrics = binary_metrics(labels, preds)

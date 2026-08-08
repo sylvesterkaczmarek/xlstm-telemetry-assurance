@@ -2,31 +2,33 @@
 
 The checked-in benchmark is a controlled synthetic experiment rather than a deployment claim.
 
-## Main result
+## Forecasting result
 
-Across three deterministic seeds, the xLSTM-style recurrent model reduces clean one-step forecasting error relative to the ordinary LSTM in both telemetry domains.
+Across three deterministic seeds, the ordinary LSTM produces lower clean one-step RMSE than the compact xLSTM-style recurrence in both telemetry domains.
 
 | Domain | LSTM RMSE | xLSTM-style RMSE |
 |---|---:|---:|
-| Spacecraft | 0.560 ± 0.023 | **0.231 ± 0.006** |
-| Robotics | 0.422 ± 0.030 | **0.167 ± 0.002** |
+| Spacecraft | **0.232 ± 0.003** | 0.285 ± 0.007 |
+| Robotics | **0.320 ± 0.007** | 0.361 ± 0.012 |
 
-The result is in standardized telemetry units.
+RMSE is expressed in standardized telemetry units. The xLSTM-style model uses slightly fewer trainable parameters in this implementation, but its explicit Python recurrence is slower than PyTorch's optimized LSTM kernel.
 
 ## Assurance result
 
-The lower forecasting error does not translate into better anomaly detection. Mean fault-detection F1 is higher for the simpler LSTM in both tracks:
+After correcting the runtime scoring semantics so that anomaly residuals use the **observed measurement available to the system**, neither recurrent model has a meaningful overall fault-detection advantage.
 
 | Domain | LSTM mean fault F1 | xLSTM-style mean fault F1 |
 |---|---:|---:|
-| Spacecraft | **0.355** | 0.239 |
-| Robotics | **0.573** | 0.227 |
+| Spacecraft | **0.236** | 0.233 |
+| Robotics | 0.216 | **0.217** |
 
-This is the central negative result. A recurrent predictor that tracks persistent drift or a regime change more effectively can reduce the residual used by a residual-based detector. Prediction quality and assurance value are therefore not interchangeable objectives.
+The near-equality is more important than the third decimal place. Packet loss is detected reliably because missingness is represented explicitly. The simple residual detector remains weak on value-only faults such as stuck sensors, gradual drift and sustained regime shifts.
 
-## Adaptation result
+This result supports a narrower conclusion than the original benchmark output: forecasting quality and residual-based assurance are separate objectives, and a detector must be evaluated using only information that would actually exist at runtime.
 
-The guarded head-adaptation experiment generated 12 candidate updates across models, domains and seeds. Three were accepted; nine exceeded the allowed guard-loss degradation and were rolled back.
+## Guarded adaptation
+
+The guarded head-adaptation experiment generated 12 candidate updates across models, domains and seeds. Nine were accepted; three exceeded the allowed guard-loss degradation and were rolled back.
 
 The mechanism is deliberately conservative, but this result should not be interpreted as evidence that the adaptation policy is deployment-safe. The guard target is available because the benchmark retains the clean counterfactual synthetic trajectory.
 
@@ -34,8 +36,8 @@ The mechanism is deliberately conservative, but this result should not be interp
 
 The benchmark supports three narrow conclusions:
 
-1. A stabilized xLSTM-style recurrence can be useful for compact physical telemetry forecasting.
-2. Forecast quality alone is a poor proxy for anomaly-detection quality.
+1. A compact xLSTM-style recurrence can be evaluated reproducibly on structured spacecraft and robotics telemetry, but this implementation does not outperform the ordinary LSTM on clean forecasting.
+2. Forecast quality alone is not a proxy for anomaly-detection quality, and runtime fault scoring must use observed telemetry rather than inaccessible clean counterfactual values.
 3. Candidate online adaptation can be isolated and automatically rolled back when an independent guard objective deteriorates.
 
 It does not establish architecture superiority, flight readiness, robotic functional safety, or general anomaly-detection performance.

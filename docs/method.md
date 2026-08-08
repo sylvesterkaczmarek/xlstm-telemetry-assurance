@@ -59,11 +59,13 @@ A compact stabilized recurrent cell motivated by the sLSTM recurrence in xLSTM. 
 
 The implementation is deliberately small enough to inspect. It is not a wrapper around the official xLSTM package and does not claim exact architectural equivalence to every component of xLSTMTime.
 
-## Uncertainty and anomaly score
+## Uncertainty and runtime anomaly score
 
 The forecast head predicts a mean and positive standard deviation per channel. Training minimizes diagonal Gaussian negative log-likelihood.
 
-A clean calibration sequence sets the anomaly threshold from the 99th percentile of uncertainty-normalized residual scores. Missing observations add an explicit penalty. This allows packet loss to remain detectable even though its value is imputed.
+A separate clean calibration sequence sets the anomaly threshold from the 99th percentile of uncertainty-normalized residual scores. At runtime, residuals are computed against the **observed telemetry available to the system**, not against the clean counterfactual retained by the synthetic benchmark. If a target channel is missing, its forward-filled value is excluded from the residual and missingness contributes an explicit anomaly penalty.
+
+The clean counterfactual is used only to measure forecast error and to provide ground-truth fault labels in the controlled experiment. It is not available to the runtime detector.
 
 ## Guarded adaptation
 

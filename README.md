@@ -53,12 +53,12 @@ A residual path carries the most recent normalized telemetry value into the fore
 
 ```python
 m_new = torch.maximum(i_log, f_log + m)
-i = torch.exp(i_log - m_new)
-f = torch.exp(f_log + m - m_new)
-
+i = torch.exp(torch.clamp(i_log - m_new, min=-20.0, max=0.0))
+f = torch.exp(torch.clamp(f_log + m - m_new, min=-20.0, max=0.0))
 c_new = f * c + i * z
 n_new = f * n + i
-h_new = o * (c_new / torch.clamp(n_new, min=1e-6))
+normalized = c_new / torch.clamp(n_new, min=1e-6)
+h_new = o * normalized
 ```
 
 See [`src/xlstm_telemetry_assurance/models.py`](src/xlstm_telemetry_assurance/models.py).
@@ -67,7 +67,7 @@ See [`src/xlstm_telemetry_assurance/models.py`](src/xlstm_telemetry_assurance/mo
 
 The default benchmark runs three seeds. Each model is trained only on clean telemetry. A separate clean stream calibrates the anomaly threshold. The same model is then evaluated against six controlled fault conditions in both physical-system domains.
 
-Forecast accuracy is measured against the known clean synthetic trajectory. Fault detection is measured against the injected fault interval. This separation matters for packet loss and sensor corruption because the observed telemetry is intentionally not always the ground truth.
+Forecast accuracy is measured against the known clean synthetic trajectory. Runtime anomaly scores, however, are computed only from telemetry that would actually be available to the system: uncertainty-normalized residuals against the observed measurement, with missing target channels excluded from the residual and missingness scored explicitly. The clean counterfactual is used only for benchmark evaluation and fault ground truth.
 
 Guarded adaptation is evaluated separately. The benchmark exposes trusted clean targets only because this is a controlled synthetic experiment; real deployment would require an independent trusted guard signal.
 
@@ -78,23 +78,23 @@ The repository includes machine-readable results produced by the checked-in benc
 <!-- RESULTS_TABLE_START -->
 | Domain | Model | Clean RMSE ↓ | 90% coverage | Mean fault F1 ↑ | Clean false-alarm rate | Parameters | CPU latency / step |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Spacecraft | LSTM | 0.560 ± 0.023 | 0.940 | **0.355** | 0.0119 | 9,132 | 0.53 ms |
-| Spacecraft | xLSTM-style | **0.231 ± 0.006** | 0.949 | 0.239 | 0.0119 | 14,168 | 1.26 ms |
-| Robotics | LSTM | 0.422 ± 0.030 | 0.914 | **0.573** | 0.0119 | 9,132 | 0.52 ms |
-| Robotics | xLSTM-style | **0.167 ± 0.002** | 0.931 | 0.227 | 0.0119 | 14,168 | 1.52 ms |
+| Spacecraft | LSTM | **0.232 ± 0.003** | 0.996 | **0.236** | 0.0118 | 6,284 | **0.12 ms** |
+| Spacecraft | xLSTM-style | 0.285 ± 0.007 | 0.995 | 0.233 | **0.0108** | **6,244** | 1.16 ms |
+| Robotics | LSTM | **0.320 ± 0.007** | 0.986 | 0.216 | 0.0113 | 6,284 | **0.12 ms** |
+| Robotics | xLSTM-style | 0.361 ± 0.012 | 0.980 | **0.217** | **0.0108** | **6,244** | 1.14 ms |
 
 Values are means across three deterministic seeds. RMSE is measured in standardized telemetry units. CPU latency is hardware-dependent and is reported only for the machine used to generate the checked-in run.
 
-**Positive result.** The xLSTM-style model produces substantially lower clean forecasting error in both physical-system tracks while maintaining similar interval coverage.
+**Forecasting result.** On this controlled benchmark, the ordinary LSTM has lower clean one-step RMSE in both physical-system tracks. The compact xLSTM-style recurrence uses slightly fewer trainable parameters, but it is slower in this straightforward Python recurrent implementation.
 
-**Negative result.** Better forecasting does **not** produce better fault detection here. The simpler LSTM yields higher mean fault-detection F1 in both domains. Persistent drift and regime changes can be partly tracked by the recurrent forecaster, reducing the residual that the assurance layer relies on. This is a useful failure mode: a predictor that becomes better at following a changing stream can become worse as a detector of that change.
+**Assurance result.** Once fault scores are computed from the observed telemetry available at runtime, neither recurrent model has a meaningful overall fault-detection advantage. Mean F1 is nearly identical in both domains. Packet loss is detected reliably because missingness is explicit, while value-only faults such as drift, stuck sensors and regime shifts remain difficult for this simple residual detector.
 
-The guarded-adaptation controller accepted only 3 of 12 candidate updates across the benchmark and rolled back the other 9 after guard loss worsened beyond tolerance. This demonstrates the rollback mechanism, not deployment-safe online learning.
+The guarded-adaptation controller accepted 9 of 12 candidate updates across the benchmark and rolled back the other 3 after guard loss worsened beyond tolerance. This demonstrates the rollback mechanism, not deployment-safe online learning.
 <!-- RESULTS_TABLE_END -->
 
 ![Fault detection F1](results/benchmark/fault_detection_f1.png)
 
-The benchmark is intentionally small. Differences between the recurrent models should be treated as results on this controlled task, not evidence that one architecture is generally superior for spacecraft or robotics telemetry.
+The benchmark is intentionally small. Its main result is methodological rather than architectural: forecast accuracy and residual-based assurance must be evaluated separately, and anomaly scoring must use only information available at runtime. The model comparison should not be treated as evidence that one architecture is generally superior for spacecraft or robotics telemetry.
 
 ## Quick start
 
