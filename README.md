@@ -188,13 +188,13 @@ See [`docs/references.md`](docs/references.md) for the xLSTM and xLSTMTime paper
 
 If you use or adapt this repository, please cite
 
-> Kaczmarek, S. (2026). *xLSTM Telemetry Assurance*. GitHub. https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance
+> Kaczmarek, S. (2024). *xLSTM Telemetry Assurance*. GitHub. https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance
 
 ```bibtex
-@software{Kaczmarek_2026_xLSTM_Telemetry_Assurance,
+@software{Kaczmarek_2024_xLSTM_Telemetry_Assurance,
   author = {Sylvester Kaczmarek},
   title  = {{xLSTM Telemetry Assurance}},
-  year   = {2026},
+  year   = {2024},
   url    = {https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance}
 }
 ```
