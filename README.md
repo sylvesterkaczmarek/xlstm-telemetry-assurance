@@ -1,52 +1,201 @@
-# Algorithmic Implementations
+# xLSTM Telemetry Assurance
 
-This folder contains code implementations of various algorithms, exploring different areas of machine learning and artificial intelligence. 
+[![CI](https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance/actions/workflows/ci.yml/badge.svg)](https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-## Published Implementations:
+Controlled PyTorch experiments testing whether an xLSTM-style streaming forecaster can provide useful prediction and runtime-assurance signals under telemetry faults, distribution shift and guarded adaptation. Spacecraft telemetry is the flagship physical-system track, with robotics used as a transfer test.
 
-1. **xlstmtime_model.py**
+The project deliberately sits between fundamental sequence modelling and physical-world autonomy. It does not turn a generic forecasting demo into a "space AI" project by relabelling the data. The benchmark makes physical-system constraints part of the experiment: missing telemetry, sensor corruption, slow drift, abrupt regime changes, uncertainty calibration, online adaptation and rollback.
 
-   This Python file provides a PyTorch implementation of the xLSTMTime model, a novel architecture for long-term time series forecasting (LTSF). xLSTMTime leverages the strengths of the extended Long Short-Term Memory (xLSTM) model, incorporating exponential gating and a revised memory structure to effectively capture temporal dependencies in time series data. 
+## At a glance
 
-   A detailed review of xLSTMTime, including its architecture, performance benchmarks, and potential impact on the LTSF landscape, can be found in the article: [xLSTMTime: A Competitive Recurrent Architecture for Long-Term Time Series Forecasting](https://www.linkedin.com/pulse/xlstmtime-competitive-recurrent-architecture-time-series-kaczmarek-jdmpe/).
+```mermaid
+flowchart LR
+    A["Physical telemetry stream"] --> B["Values + missingness mask"]
+    B --> C["LSTM baseline"]
+    B --> D["xLSTM-style forecaster"]
+    C --> E["Mean + uncertainty"]
+    D --> E
+    E --> F["Standardized residual"]
+    F --> G["Fault score"]
+    D --> H["Candidate head adaptation"]
+    H --> I["Guard buffer"]
+    I -->|passes| J["Accept update"]
+    I -->|degrades| K["Rollback"]
+```
 
-   **Explanation:**
+## Project overview
 
-   *   **Import Libraries:** Imports necessary libraries including PyTorch.
-   *   **sLSTMCell:**
-       *   This class defines the sLSTM cell, a variant of LSTM with exponential gating and stabilization.
-       *   `__init__`: Initializes weights and biases for linear transformations.
-       *   `forward`: Implements the forward pass of the sLSTM cell, calculating hidden state, cell state, normalization state, and memory based on input, previous hidden state, and previous cell state.
-   *   **mLSTMCell:**
-       *   This class defines the mLSTM cell, using matrix memory for increased capacity.
-       *   `__init__`: Initializes weights and biases for linear transformations used in query, key, value, and gate calculations.
-       *   `forward`: Implements the forward pass of the mLSTM cell, updating matrix memory, normalization, and hidden state.
-   *   **xLSTMTime:**
-       *   This class defines the overall xLSTMTime model for time series forecasting.
-       *   `__init__`:
-           *   Initializes parameters like input size, hidden size, output size, sequence length, and whether to use mLSTM.
-           *   Defines layers for series decomposition, linear transformations, xLSTM block (sLSTM or mLSTM), and instance normalization.
-       *   `forward`:
-           *   Implements the forward pass of the model.
-           *   Performs series decomposition to extract trend and seasonal information.
-           *   Applies linear transformation and batch normalization to the input.
-           *   Iterates through the sequence length, applying either the sLSTM or mLSTM cell based on the `use_mlstm` flag.
-           *   Applies a final linear transformation and instance normalization to produce the output.
-   *   **Example Usage:**
-       *   Demonstrates how to create an instance of the xLSTMTime model and perform a forward pass with sample input data.
+- **Spacecraft track:** coupled power, thermal, reaction-wheel, pointing and payload telemetry.
+- **Robotics track:** joint motion, motor current and temperature, vibration and tool load.
+- **Faults:** packet loss, spikes, stuck sensors, gradual drift, regime shift and a mixed-fault stream.
+- **Forecasting:** ordinary LSTM versus a compact stabilized xLSTM/sLSTM-style recurrent model.
+- **Uncertainty:** per-channel Gaussian mean and predictive scale trained with negative log-likelihood.
+- **Runtime assurance:** anomaly scores from uncertainty-normalized residuals plus explicit missingness.
+- **Adaptation:** head-only candidate updates accepted only when a disjoint guard buffer does not degrade beyond tolerance.
+- **Reproducibility:** deterministic generators, fixed seeds, CSV/JSON outputs, tests and CI.
 
-   **Note:** This implementation is a framework and may require further adjustments and hyperparameter tuning based on specific datasets and tasks. The code assumes basic familiarity with PyTorch and deep learning concepts.
+## Why this is useful
 
-2. **Stay Tuned for More** 
+A telemetry forecaster is more operationally useful when it can say both **what it expects next** and **how surprising the observation is**. That same signal can support fault detection, adaptation triggers and rollback decisions without requiring a separate opaque anomaly model.
 
-   This repository will continue to expand with new algorithmic implementations. Follow me on [GitHub](https://github.com/SJKaczmarek/) and [LinkedIn](https://www.linkedin.com/in/sylvesterkaczmarek/) to stay updated on the latest additions.
+The repository also tests whether the mechanism transfers between two different physical-system domains. The goal is not to claim that synthetic spacecraft or robot telemetry is flight-realistic. The goal is to expose the forecasting and assurance logic to structured physical dynamics and controlled failure modes that are easy to reproduce and inspect.
 
-   Have a specific algorithm you'd like to see implemented? Feel free to submit a request! 
+## xLSTMTime-style model
+
+The central model uses a stabilized exponential-gating recurrent cell with a normalizer and log-space stabilizer. This keeps the xLSTM idea that input and forget gates can operate exponentially without allowing direct exponentials to dominate the recurrence.
+
+A residual path carries the most recent normalized telemetry value into the forecast head. The probabilistic head predicts both mean and scale for every telemetry channel.
+
+```python
+m_new = torch.maximum(i_log, f_log + m)
+i = torch.exp(i_log - m_new)
+f = torch.exp(f_log + m - m_new)
+
+c_new = f * c + i * z
+n_new = f * n + i
+h_new = o * (c_new / torch.clamp(n_new, min=1e-6))
+```
+
+See [`src/xlstm_telemetry_assurance/models.py`](src/xlstm_telemetry_assurance/models.py).
+
+## Experimental setup
+
+The default benchmark runs three seeds. Each model is trained only on clean telemetry. A separate clean stream calibrates the anomaly threshold. The same model is then evaluated against six controlled fault conditions in both physical-system domains.
+
+Forecast accuracy is measured against the known clean synthetic trajectory. Fault detection is measured against the injected fault interval. This separation matters for packet loss and sensor corruption because the observed telemetry is intentionally not always the ground truth.
+
+Guarded adaptation is evaluated separately. The benchmark exposes trusted clean targets only because this is a controlled synthetic experiment; real deployment would require an independent trusted guard signal.
+
+## Results snapshot
+
+The repository includes machine-readable results produced by the checked-in benchmark. See [`results/benchmark/summary.json`](results/benchmark/summary.json) and [`results/benchmark/metrics.csv`](results/benchmark/metrics.csv).
+
+<!-- RESULTS_TABLE_START -->
+| Domain | Model | Clean RMSE ↓ | 90% coverage | Mean fault F1 ↑ | Clean false-alarm rate | Parameters | CPU latency / step |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Spacecraft | LSTM | 0.560 ± 0.023 | 0.940 | **0.355** | 0.0119 | 9,132 | 0.53 ms |
+| Spacecraft | xLSTM-style | **0.231 ± 0.006** | 0.949 | 0.239 | 0.0119 | 14,168 | 1.26 ms |
+| Robotics | LSTM | 0.422 ± 0.030 | 0.914 | **0.573** | 0.0119 | 9,132 | 0.52 ms |
+| Robotics | xLSTM-style | **0.167 ± 0.002** | 0.931 | 0.227 | 0.0119 | 14,168 | 1.52 ms |
+
+Values are means across three deterministic seeds. RMSE is measured in standardized telemetry units. CPU latency is hardware-dependent and is reported only for the machine used to generate the checked-in run.
+
+**Positive result.** The xLSTM-style model produces substantially lower clean forecasting error in both physical-system tracks while maintaining similar interval coverage.
+
+**Negative result.** Better forecasting does **not** produce better fault detection here. The simpler LSTM yields higher mean fault-detection F1 in both domains. Persistent drift and regime changes can be partly tracked by the recurrent forecaster, reducing the residual that the assurance layer relies on. This is a useful failure mode: a predictor that becomes better at following a changing stream can become worse as a detector of that change.
+
+The guarded-adaptation controller accepted only 3 of 12 candidate updates across the benchmark and rolled back the other 9 after guard loss worsened beyond tolerance. This demonstrates the rollback mechanism, not deployment-safe online learning.
+<!-- RESULTS_TABLE_END -->
+
+![Fault detection F1](results/benchmark/fault_detection_f1.png)
+
+The benchmark is intentionally small. Differences between the recurrent models should be treated as results on this controlled task, not evidence that one architecture is generally superior for spacecraft or robotics telemetry.
+
+## Quick start
+
+```bash
+git clone https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance.git
+cd xlstm-telemetry-assurance
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .[dev]
+python -m pytest
+python -m xlstm_telemetry_assurance.benchmark --output results/benchmark
+```
+
+For a faster pipeline check:
+
+```bash
+python -m xlstm_telemetry_assurance.benchmark --smoke --output results/smoke
+```
+
+## Outputs
+
+```text
+results/benchmark/
+├── fault_detection_f1.png
+├── metrics.csv
+└── summary.json
+```
+
+`metrics.csv` retains per-seed measurements so aggregate numbers can be audited. `summary.json` contains the compact result used by the README.
+
+## Repository layout
+
+```text
+xlstm-telemetry-assurance/
+├── .github/workflows/ci.yml
+├── docs/
+│   ├── findings.md
+│   ├── method.md
+│   ├── references.md
+│   └── reproducibility.md
+├── results/benchmark/
+├── src/xlstm_telemetry_assurance/
+│   ├── benchmark.py
+│   ├── data.py
+│   ├── metrics.py
+│   ├── models.py
+│   └── training.py
+├── tests/
+├── CITATION.cff
+├── LICENSE
+├── Makefile
+├── pyproject.toml
+├── requirements.txt
+└── README.md
+```
+
+## Reproducibility and validation
+
+- deterministic synthetic telemetry for each seed;
+- explicit clean versus corrupted telemetry semantics;
+- separate clean calibration stream;
+- multiple benchmark seeds;
+- model, metric, data and adaptation tests;
+- lightweight end-to-end CI smoke run;
+- machine-readable CSV and JSON results;
+- no accelerator requirement.
+
+See [`docs/reproducibility.md`](docs/reproducibility.md) and [`docs/findings.md`](docs/findings.md).
+
+## What this repository does not claim
+
+- The synthetic generators are not spacecraft or robotics digital twins.
+- Forecast-residual anomaly detection is not sufficient mission assurance.
+- Guarded adaptation assumes access to a trusted guard signal; the benchmark's clean counterfactual target is available only because the faults are synthetic.
+- The compact recurrent cell is an xLSTM-style research implementation, not a drop-in copy of the official xLSTM library.
+- Results on this benchmark do not establish general xLSTM superiority over LSTM, Transformers or time-series foundation models.
+- Passing the benchmark is not evidence of flight readiness, functional safety certification or deployment security.
+
+## Extending
+
+Natural next steps include replacing the synthetic spacecraft track with publication-safe real mission telemetry, testing irregular sampling rather than fixed-rate masking, adding calibration methods for non-Gaussian residuals, and comparing against a modern pretrained time-series model under identical fault conditions.
+
+## References
+
+See [`docs/references.md`](docs/references.md) for the xLSTM and xLSTMTime papers that motivate the recurrent mechanism.
+
+## Cite this repository
+
+If you use or adapt this repository, please cite
+
+> Kaczmarek, S. (2026). *xLSTM Telemetry Assurance*. GitHub. https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance
+
+```bibtex
+@software{Kaczmarek_2026_xLSTM_Telemetry_Assurance,
+  author = {Sylvester Kaczmarek},
+  title  = {{xLSTM Telemetry Assurance}},
+  year   = {2026},
+  url    = {https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance}
+}
+```
 
 ## License
 
-This repository is licensed under the [MIT License](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
-## Contact
-
-For sensitive matters, inquiries, or professional collaborations, please reach out via email at [space.stranger698@8shield.net](mailto:space.stranger698@8shield.net). For quicker responses, you can also connect with me on my [LinkedIn Profile](https://www.linkedin.com/in/sylvesterkaczmarek/).
+© **Sylvester Kaczmarek** · [https://www.sylvesterkaczmarek.com](https://www.sylvesterkaczmarek.com)

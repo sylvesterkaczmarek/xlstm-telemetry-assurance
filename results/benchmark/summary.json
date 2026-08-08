@@ -1,0 +1,50 @@
+{
+  "spacecraft": {
+    "lstm": {
+      "clean_rmse_mean": 0.5599526762962341,
+      "clean_rmse_std": 0.02273952888777478,
+      "clean_coverage_90_mean": 0.939800997376442,
+      "fault_f1_mean": 0.3548350994146422,
+      "mixed_fault_f1_mean": 0.3845663039607221,
+      "false_alarm_rate_mean": 0.011940298507462687,
+      "parameters": 9132,
+      "latency_ms_mean": 0.5318429122859401,
+      "adaptation_accept_rate": 0.3333333333333333
+    },
+    "xlstm": {
+      "clean_rmse_mean": 0.23060761392116547,
+      "clean_rmse_std": 0.005822678998061272,
+      "clean_coverage_90_mean": 0.9485903814262023,
+      "fault_f1_mean": 0.23893013461328385,
+      "mixed_fault_f1_mean": 0.27273151124517585,
+      "false_alarm_rate_mean": 0.011940298507462687,
+      "parameters": 14168,
+      "latency_ms_mean": 1.260639160995626,
+      "adaptation_accept_rate": 0.0
+    }
+  },
+  "robotics": {
+    "lstm": {
+      "clean_rmse_mean": 0.4215573767820994,
+      "clean_rmse_std": 0.029643684391759208,
+      "clean_coverage_90_mean": 0.9135986733001658,
+      "fault_f1_mean": 0.5729817306162956,
+      "mixed_fault_f1_mean": 0.5952769900262695,
+      "false_alarm_rate_mean": 0.011940298507462687,
+      "parameters": 9132,
+      "latency_ms_mean": 0.5204868461053326,
+      "adaptation_accept_rate": 0.6666666666666666
+    },
+    "xlstm": {
+      "clean_rmse_mean": 0.16688222189744315,
+      "clean_rmse_std": 0.0015574270071132065,
+      "clean_coverage_90_mean": 0.9305143720870648,
+      "fault_f1_mean": 0.2269034190894208,
+      "mixed_fault_f1_mean": 0.2080967231149811,
+      "false_alarm_rate_mean": 0.011940298507462687,
+      "parameters": 14168,
+      "latency_ms_mean": 1.5225505345731143,
+      "adaptation_accept_rate": 0.0
+    }
+  }
+}
