@@ -37,7 +37,7 @@ flowchart LR
 - **Uncertainty:** per-channel Gaussian mean and predictive scale trained with negative log-likelihood.
 - **Runtime assurance:** anomaly scores from uncertainty-normalized residuals plus explicit missingness.
 - **Adaptation:** head-only candidate updates accepted only when a disjoint guard buffer does not degrade beyond tolerance.
-- **Reproducibility:** deterministic generators, fixed seeds, CSV/JSON outputs, tests and CI.
+- **Reproducibility:** deterministic generators, fixed seeds, deterministic PyTorch CPU settings, machine-readable run provenance, tests and CI.
 
 ## Why this is useful
 
@@ -108,6 +108,15 @@ python -m pytest
 python -m xlstm_telemetry_assurance.benchmark --output results/benchmark
 ```
 
+`pyproject.toml` is the authoritative package and dependency definition. For the exact Python 3.12 reference environment validated by CI:
+
+```bash
+python -m pip install -r requirements-reference.txt
+python -m pip install --no-build-isolation --no-deps -e .
+```
+
+The reference file contains exact direct pins for reproducibility; it does not replace the supported dependency ranges in `pyproject.toml`.
+
 For a faster pipeline check:
 
 ```bash
@@ -120,10 +129,11 @@ python -m xlstm_telemetry_assurance.benchmark --smoke --output results/smoke
 results/benchmark/
 ├── fault_detection_f1.png
 ├── metrics.csv
+├── run_environment.json
 └── summary.json
 ```
 
-`metrics.csv` retains per-seed measurements, including Gaussian NLL, so scenario-level values can be audited. `summary.json` contains the compact result used by the README.
+`metrics.csv` retains per-seed measurements, including Gaussian NLL, so scenario-level values can be audited. `summary.json` contains the compact result used by the README. `run_environment.json` records Git state, Python/platform/CPU information, package versions, effective benchmark configuration, deterministic-execution settings and a stable SHA-256 fingerprint.
 
 ## Repository layout
 
@@ -144,13 +154,14 @@ xlstm-telemetry-assurance/
 │   ├── data.py
 │   ├── metrics.py
 │   ├── models.py
+│   ├── provenance.py
 │   └── training.py
 ├── tests/
 ├── CITATION.cff
 ├── LICENSE
 ├── Makefile
 ├── pyproject.toml
-├── requirements.txt
+├── requirements-reference.txt
 └── README.md
 ```
 
@@ -160,10 +171,14 @@ xlstm-telemetry-assurance/
 - explicit clean versus corrupted telemetry semantics;
 - separate clean calibration stream;
 - multiple benchmark seeds;
-- model, metric, data and adaptation tests;
-- lightweight end-to-end CI smoke run;
+- PyTorch deterministic algorithms and single-thread CPU execution for benchmark runs;
+- machine-readable environment/configuration provenance with a stable fingerprint;
+- CI on Python 3.10, 3.11 and the pinned Python 3.12 reference environment;
+- compile, Ruff, tests, package build and an end-to-end smoke benchmark in CI;
 - machine-readable CSV and JSON results;
 - no accelerator requirement.
+
+These controls improve repeatability but do not imply bit-for-bit identity across different operating systems, CPU libraries, PyTorch builds or hardware.
 
 See [`docs/reproducibility.md`](docs/reproducibility.md) and [`docs/findings.md`](docs/findings.md).
 

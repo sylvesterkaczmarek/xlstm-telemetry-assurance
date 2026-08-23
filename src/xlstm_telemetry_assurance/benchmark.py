@@ -14,6 +14,7 @@ import torch
 from .data import build_windows, generate_clean_telemetry, inject_fault, prepare_observed_inputs, standardize
 from .metrics import binary_metrics, coverage, gaussian_nll, rmse
 from .models import LSTMForecaster, XLSTMForecaster, count_parameters
+from .provenance import configure_deterministic_execution, write_run_environment
 from .training import guarded_adaptation, predict, train_model
 
 DEFAULT_SEEDS = [11, 29, 47]
@@ -21,11 +22,31 @@ DOMAINS = ["spacecraft", "robotics"]
 FAULTS = ["packet_loss", "spike", "stuck", "drift", "regime_shift", "mixed"]
 
 
+def _benchmark_config(smoke: bool) -> dict:
+    return {
+        "smoke": smoke,
+        "seeds": [11] if smoke else list(DEFAULT_SEEDS),
+        "domains": list(DOMAINS),
+        "faults": list(FAULTS),
+        "sequence_length": 16 if smoke else 24,
+        "train_length": 520 if smoke else 1050,
+        "eval_length": 300 if smoke else 700,
+        "epochs": 2 if smoke else 10,
+        "hidden_size": 20 if smoke else 32,
+        "training_learning_rate": 0.004 if smoke else 0.003,
+        "calibration_quantile": 0.99,
+        "missingness_score_boost": 4.0,
+        "adaptation_steps": 4 if smoke else 10,
+        "adaptation_learning_rate": 0.015,
+        "adaptation_tolerance": 0.01,
+        "latency_repeats": 120,
+    }
+
+
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.set_num_threads(1)
 
 
 def _latency_ms(model: torch.nn.Module, x: torch.Tensor, repeats: int = 120) -> float:
@@ -138,12 +159,16 @@ def _adaptation_check(model, domain, seed, mean, std, seq_len, smoke=False):
 
 def run_benchmark(output: Path, smoke: bool = False) -> dict:
     output.mkdir(parents=True, exist_ok=True)
-    seeds = [11] if smoke else DEFAULT_SEEDS
-    seq_len = 16 if smoke else 24
-    train_length = 520 if smoke else 1050
-    eval_length = 300 if smoke else 700
-    epochs = 2 if smoke else 10
-    hidden = 20 if smoke else 32
+    config = _benchmark_config(smoke)
+    deterministic_settings = configure_deterministic_execution()
+    write_run_environment(output / "run_environment.json", config, deterministic_settings)
+
+    seeds = config["seeds"]
+    seq_len = config["sequence_length"]
+    train_length = config["train_length"]
+    eval_length = config["eval_length"]
+    epochs = config["epochs"]
+    hidden = config["hidden_size"]
 
     rows: list[dict] = []
 
@@ -166,7 +191,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
             ]:
                 _seed_everything(seed)
                 model = factory()
-                train_model(model, train_x, train_y, epochs=epochs, lr=0.004 if smoke else 0.003)
+                train_model(model, train_x, train_y, epochs=epochs, lr=config["training_learning_rate"])
                 threshold = _calibrate_threshold(model, calibration, mean, std, seq_len)
 
                 clean_obs = test_clean.copy()
@@ -183,7 +208,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                     threshold,
                     seq_len,
                 )
-                latency = _latency_ms(model, torch.from_numpy(train_x[:16]))
+                latency = _latency_ms(model, torch.from_numpy(train_x[:16]), repeats=config["latency_repeats"])
                 common = {
                     "domain": domain,
                     "model": model_name,

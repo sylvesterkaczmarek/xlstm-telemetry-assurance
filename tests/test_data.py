@@ -16,7 +16,7 @@ def test_packet_loss_preserves_explicit_missingness():
     assert fault_mask.any()
     mean = clean.mean(axis=0)
     std = clean.std(axis=0) + 1e-6
-    inputs, values = prepare_observed_inputs(observed, missing, mean, std)
+    inputs, _ = prepare_observed_inputs(observed, missing, mean, std)
     channels = clean.shape[1]
     assert inputs.shape[1] == channels * 2
     assert np.isfinite(inputs).all()

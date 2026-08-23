@@ -9,17 +9,57 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install
-        run: python -m pip install -e .[dev]
+
+      - name: Install supported-range environment
+        if: matrix.python-version != '3.12'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Install pinned Python 3.12 reference environment
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-reference.txt
+          python -m pip install --no-build-isolation --no-deps -e .
+
+      - name: Compile
+        run: python -m compileall -q src tests
+
+      - name: Ruff
+        run: python -m ruff check src tests
+
       - name: Tests
         run: python -m pytest
+
+      - name: Build package
+        if: matrix.python-version == '3.12'
+        run: python -m build --no-isolation
+
       - name: Smoke benchmark
         if: matrix.python-version == '3.12'
         run: python -m xlstm_telemetry_assurance.benchmark --smoke --output results/ci-smoke
+
+      - name: Verify smoke provenance
+        if: matrix.python-version == '3.12'
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("results/ci-smoke/run_environment.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          assert data["schema_version"] == 1
+          assert data["benchmark"]["smoke"] is True
+          assert data["benchmark"]["seeds"] == [11]
+          assert data["determinism"]["torch_deterministic_algorithms"] is True
+          assert data["determinism"]["torch_num_threads"] == 1
+          assert len(data["environment_fingerprint_sha256"]) == 64
+          PY
