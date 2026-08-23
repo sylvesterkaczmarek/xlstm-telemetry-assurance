@@ -110,7 +110,6 @@ def _robotics(length: int, rng: np.random.Generator) -> np.ndarray:
 
 
 def inject_fault(clean: np.ndarray, fault: str, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    rng = np.random.default_rng(seed)
     observed = clean.copy()
     missing = np.zeros_like(clean, dtype=bool)
     fault_mask = np.zeros(clean.shape[0], dtype=bool)
