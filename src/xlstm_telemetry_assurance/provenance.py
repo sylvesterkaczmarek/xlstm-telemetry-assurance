@@ -69,7 +69,7 @@ def _git_state(repo_root: Path | None = None) -> dict[str, Any]:
     root = repo_root if repo_root is not None else _discover_git_root()
     if root is not None:
         sha = _run_git(root, "rev-parse", "HEAD")
-        status = _run_git(root, "status", "--porcelain", "--untracked-files=no")
+        status = _run_git(root, "status", "--porcelain")
         if sha is not None:
             return {
                 "available": True,
