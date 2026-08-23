@@ -78,9 +78,9 @@ The repository includes machine-readable results produced by the checked-in benc
 <!-- RESULTS_TABLE_START -->
 | Domain | Model | Clean RMSE ↓ | 90% coverage | Mean fault F1 ↑ | Clean false-alarm rate | Parameters | CPU latency / step |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Spacecraft | LSTM | **0.232 ± 0.003** | 0.996 | **0.236** | 0.0118 | 6,284 | **0.12 ms** |
-| Spacecraft | xLSTM-style | 0.285 ± 0.007 | 0.995 | 0.233 | **0.0108** | **6,244** | 1.16 ms |
-| Robotics | LSTM | **0.320 ± 0.007** | 0.986 | 0.216 | 0.0113 | 6,284 | **0.12 ms** |
+| Spacecraft | LSTM | **0.232 ± 0.003** | 0.996 | **0.236** | 0.0118 | 6,284 | **0.14 ms** |
+| Spacecraft | xLSTM-style | 0.285 ± 0.007 | 0.995 | 0.233 | **0.0108** | **6,244** | 1.20 ms |
+| Robotics | LSTM | **0.320 ± 0.007** | 0.986 | 0.216 | 0.0113 | 6,284 | **0.13 ms** |
 | Robotics | xLSTM-style | 0.361 ± 0.012 | 0.980 | **0.217** | **0.0108** | **6,244** | 1.14 ms |
 
 Values are means across three deterministic seeds. RMSE is measured in standardized telemetry units. CPU latency is hardware-dependent and is reported only for the machine used to generate the checked-in run.
@@ -123,7 +123,7 @@ results/benchmark/
 └── summary.json
 ```
 
-`metrics.csv` retains per-seed measurements so aggregate numbers can be audited. `summary.json` contains the compact result used by the README.
+`metrics.csv` retains per-seed measurements, including Gaussian NLL, so scenario-level values can be audited. `summary.json` contains the compact result used by the README.
 
 ## Repository layout
 

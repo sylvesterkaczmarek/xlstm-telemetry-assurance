@@ -8,7 +8,7 @@
       "mixed_fault_f1_mean": 0.3181514848181515,
       "false_alarm_rate_mean": 0.011834319526627219,
       "parameters": 6284,
-      "latency_ms_mean": 0.12276536111117921,
+      "latency_ms_mean": 0.13619513333335614,
       "adaptation_accept_rate": 1.0
     },
     "xlstm": {
@@ -19,7 +19,7 @@
       "mixed_fault_f1_mean": 0.29788930968600913,
       "false_alarm_rate_mean": 0.010848126232741617,
       "parameters": 6244,
-      "latency_ms_mean": 1.156995561111292,
+      "latency_ms_mean": 1.195583405555567,
       "adaptation_accept_rate": 0.0
     }
   },
@@ -32,7 +32,7 @@
       "mixed_fault_f1_mean": 0.2812555104919767,
       "false_alarm_rate_mean": 0.011341222879684419,
       "parameters": 6284,
-      "latency_ms_mean": 0.12249398611111752,
+      "latency_ms_mean": 0.12706412222216715,
       "adaptation_accept_rate": 1.0
     },
     "xlstm": {
@@ -43,7 +43,7 @@
       "mixed_fault_f1_mean": 0.28128863175592145,
       "false_alarm_rate_mean": 0.010848126232741617,
       "parameters": 6244,
-      "latency_ms_mean": 1.138638366666416,
+      "latency_ms_mean": 1.1397164194445646,
       "adaptation_accept_rate": 1.0
     }
   }

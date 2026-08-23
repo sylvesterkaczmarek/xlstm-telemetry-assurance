@@ -81,6 +81,28 @@ def _score_stream(
     return metrics
 
 
+def _scenario_row(
+    common: dict,
+    scenario: str,
+    metrics: dict[str, float],
+    *,
+    include_detection_metrics: bool,
+) -> dict:
+    """Build one benchmark row from the metrics for that exact scenario."""
+    return {
+        **common,
+        "scenario": scenario,
+        "rmse": metrics["rmse"],
+        "coverage_90": metrics["coverage_90"],
+        "gaussian_nll": metrics["gaussian_nll"],
+        "f1": metrics["f1"] if include_detection_metrics else "",
+        "precision": metrics["precision"] if include_detection_metrics else "",
+        "recall": metrics["recall"] if include_detection_metrics else "",
+        "false_alarm_rate": metrics["false_positive_rate"],
+        "adaptation_accepted": "",
+    }
+
+
 def _calibrate_threshold(model, clean, mean, std, seq_len):
     missing = np.zeros_like(clean, dtype=bool)
     inputs, clean_std = prepare_observed_inputs(clean, missing, mean, std)
@@ -170,17 +192,12 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                     "latency_ms": latency,
                 }
                 rows.append(
-                    {
-                        **common,
-                        "scenario": "clean",
-                        "rmse": clean_metrics["rmse"],
-                        "coverage_90": clean_metrics["coverage_90"],
-                        "f1": "",
-                        "precision": "",
-                        "recall": "",
-                        "false_alarm_rate": clean_metrics["false_positive_rate"],
-                        "adaptation_accepted": "",
-                    }
+                    _scenario_row(
+                        common,
+                        "clean",
+                        clean_metrics,
+                        include_detection_metrics=False,
+                    )
                 )
 
                 for fault in FAULTS:
@@ -197,17 +214,12 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                         seq_len,
                     )
                     rows.append(
-                        {
-                            **common,
-                            "scenario": fault,
-                            "rmse": clean_metrics["rmse"],
-                            "coverage_90": clean_metrics["coverage_90"],
-                            "f1": metrics["f1"],
-                            "precision": metrics["precision"],
-                            "recall": metrics["recall"],
-                            "false_alarm_rate": clean_metrics["false_positive_rate"],
-                            "adaptation_accepted": "",
-                        }
+                        _scenario_row(
+                            common,
+                            fault,
+                            metrics,
+                            include_detection_metrics=True,
+                        )
                     )
 
                 adaptation = _adaptation_check(model, domain, seed, mean, std, seq_len, smoke=smoke)
@@ -217,6 +229,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                         "scenario": "adaptation",
                         "rmse": "",
                         "coverage_90": "",
+                        "gaussian_nll": "",
                         "f1": "",
                         "precision": "",
                         "recall": "",
@@ -232,6 +245,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
         "scenario",
         "rmse",
         "coverage_90",
+        "gaussian_nll",
         "f1",
         "precision",
         "recall",
