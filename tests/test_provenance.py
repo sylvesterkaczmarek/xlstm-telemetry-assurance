@@ -20,6 +20,7 @@ def test_benchmark_config_records_effective_scientific_parameters():
     assert full["train_length"] == 1050
     assert full["eval_length"] == 700
     assert full["hidden_size"] == 32
+    assert full["timing"]["metric"] == "window_inference_latency_ms"
     assert smoke["seeds"] == [11]
     assert smoke["sequence_length"] == 16
     assert smoke["epochs"] == 2
