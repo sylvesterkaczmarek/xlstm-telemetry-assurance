@@ -2,42 +2,48 @@
 
 The checked-in benchmark is a controlled synthetic experiment rather than a deployment claim.
 
-## Forecasting result
+## Forecasting
 
-Across three deterministic seeds, the ordinary LSTM produces lower clean one-step RMSE than the compact xLSTM-style recurrence in both telemetry domains.
+Across three deterministic seeds, the ordinary LSTM has lower clean one-step RMSE in both telemetry domains.
 
-| Domain | LSTM RMSE | xLSTM-style RMSE |
-|---|---:|---:|
-| Spacecraft | **0.232 ± 0.003** | 0.285 ± 0.007 |
-| Robotics | **0.320 ± 0.007** | 0.361 ± 0.012 |
+| Domain | LSTM RMSE | xLSTM-style RMSE | LSTM Gaussian NLL | xLSTM-style Gaussian NLL |
+|---|---:|---:|---:|---:|
+| Spacecraft | **0.232 ± 0.003** | 0.285 ± 0.007 | **0.494** | 0.495 |
+| Robotics | **0.320 ± 0.007** | 0.361 ± 0.012 | 0.575 | **0.501** |
 
-RMSE is expressed in standardized telemetry units. The xLSTM-style model uses slightly fewer trainable parameters in this implementation, but its explicit Python recurrence is slower than PyTorch's optimized LSTM kernel.
+RMSE is expressed in standardised telemetry units. Gaussian NLL captures both mean prediction and predicted scale, so its ranking need not match RMSE exactly.
 
-## Assurance result
+## Fault detection
 
-After correcting the runtime scoring semantics so that anomaly residuals use the **observed measurement available to the system**, neither recurrent model has a meaningful overall fault-detection advantage.
+Packet loss must be separated from value-only faults because the detector receives an explicit missingness signal.
 
-| Domain | LSTM mean fault F1 | xLSTM-style mean fault F1 |
-|---|---:|---:|
-| Spacecraft | **0.236** | 0.233 |
-| Robotics | 0.216 | **0.217** |
+| Domain | Model | Packet-loss F1 | Value-only F1 mean | Mixed F1 | Overall six-fault F1 |
+|---|---|---:|---:|---:|---:|
+| Spacecraft | LSTM | 0.913 | **0.046** | **0.318** | **0.236** |
+| Spacecraft | xLSTM-style | **0.916** | 0.046 | 0.298 | 0.233 |
+| Robotics | LSTM | 0.916 | 0.025 | 0.281 | 0.216 |
+| Robotics | xLSTM-style | **0.920** | **0.025** | **0.281** | **0.217** |
 
-The near-equality is more important than the third decimal place. Packet loss is detected reliably because missingness is represented explicitly. The simple residual detector remains weak on value-only faults such as stuck sensors, gradual drift and sustained regime shifts.
+The value-only mean covers spike, stuck, drift and regime shift. The mixed scenario contains packet loss, spike and drift and is therefore reported separately. Per-fault means are available in `results/benchmark/summary.json`.
 
-This result supports a narrower conclusion than the original benchmark output: forecasting quality and residual-based assurance are separate objectives, and a detector must be evaluated using only information that would actually exist at runtime.
+The main result is that the strong packet-loss number is driven by explicit missingness evidence, while the simple residual detector remains weak on value-only faults. Forecast quality and value-fault detection quality are therefore separate objectives in this benchmark.
 
 ## Guarded adaptation
 
-The guarded head-adaptation experiment generated 12 candidate updates across models, domains and seeds. Nine were accepted; three exceeded the allowed guard-loss degradation and were rolled back.
+The guarded head-adaptation experiment generated 12 candidate updates. Nine were accepted and three were rolled back after guard loss exceeded the allowed tolerance.
 
-The mechanism is deliberately conservative, but this result should not be interpreted as evidence that the adaptation policy is deployment-safe. The guard target is available because the benchmark retains the clean counterfactual synthetic trajectory.
+This demonstrates rollback behaviour only. It is not evidence that the adaptation policy is deployment-safe because the synthetic experiment has access to a trusted clean counterfactual target.
+
+## Host timing
+
+The reported `window_inference_latency_ms` is one complete model forward pass over one 24-sample input window on the recorded host CPU. It is hardware-dependent and is not recurrent-timestep latency, spacecraft or robot real-time timing, or WCET.
 
 ## Interpretation
 
 The benchmark supports three narrow conclusions:
 
-1. A compact xLSTM-style recurrence can be evaluated reproducibly on structured spacecraft and robotics telemetry, but this implementation does not outperform the ordinary LSTM on clean forecasting.
-2. Forecast quality alone is not a proxy for anomaly-detection quality, and runtime fault scoring must use observed telemetry rather than inaccessible clean counterfactual values.
-3. Candidate online adaptation can be isolated and automatically rolled back when an independent guard objective deteriorates.
+1. The compact xLSTM-style recurrence can be evaluated reproducibly, but this implementation does not outperform the ordinary LSTM on clean RMSE.
+2. Packet-loss detection with explicit missingness should not be conflated with learned residual detection of value faults.
+3. Candidate online adaptation can be isolated and rolled back when an independent guard objective deteriorates.
 
-It does not establish architecture superiority, flight readiness, robotic functional safety, or general anomaly-detection performance.
+It does not establish architecture superiority, flight readiness, robotic functional safety, general anomaly-detection performance or deployment timing guarantees.
