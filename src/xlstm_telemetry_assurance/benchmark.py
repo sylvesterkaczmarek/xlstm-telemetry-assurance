@@ -20,15 +20,30 @@ from .training import guarded_adaptation, predict, train_model
 DEFAULT_SEEDS = [11, 29, 47]
 DOMAINS = ["spacecraft", "robotics"]
 FAULTS = ["packet_loss", "spike", "stuck", "drift", "regime_shift", "mixed"]
+VALUE_ONLY_FAULTS = ["spike", "stuck", "drift", "regime_shift"]
+
+
+def _timing_metadata(sequence_length: int) -> dict:
+    return {
+        "metric": "window_inference_latency_ms",
+        "device": "host_cpu",
+        "scope": "complete_model_forward_pass_for_one_input_window",
+        "input_window_length": sequence_length,
+        "hardware_dependent": True,
+        "spacecraft_or_robot_realtime_timing_measured": False,
+        "wcet_measured": False,
+    }
 
 
 def _benchmark_config(smoke: bool) -> dict:
+    sequence_length = 16 if smoke else 24
     return {
         "smoke": smoke,
         "seeds": [11] if smoke else list(DEFAULT_SEEDS),
         "domains": list(DOMAINS),
         "faults": list(FAULTS),
-        "sequence_length": 16 if smoke else 24,
+        "value_only_faults": list(VALUE_ONLY_FAULTS),
+        "sequence_length": sequence_length,
         "train_length": 520 if smoke else 1050,
         "eval_length": 300 if smoke else 700,
         "epochs": 2 if smoke else 10,
@@ -39,7 +54,8 @@ def _benchmark_config(smoke: bool) -> dict:
         "adaptation_steps": 4 if smoke else 10,
         "adaptation_learning_rate": 0.015,
         "adaptation_tolerance": 0.01,
-        "latency_repeats": 120,
+        "window_inference_latency_repeats": 120,
+        "timing": _timing_metadata(sequence_length),
     }
 
 
@@ -49,7 +65,8 @@ def _seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def _latency_ms(model: torch.nn.Module, x: torch.Tensor, repeats: int = 120) -> float:
+def _window_inference_latency_ms(model: torch.nn.Module, x: torch.Tensor, repeats: int = 120) -> float:
+    """Measure one complete host-CPU forward pass for one input window."""
     model.eval()
     sample = x[:1]
     with torch.no_grad():
@@ -208,13 +225,17 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                     threshold,
                     seq_len,
                 )
-                latency = _latency_ms(model, torch.from_numpy(train_x[:16]), repeats=config["latency_repeats"])
+                window_latency = _window_inference_latency_ms(
+                    model,
+                    torch.from_numpy(train_x[:16]),
+                    repeats=config["window_inference_latency_repeats"],
+                )
                 common = {
                     "domain": domain,
                     "model": model_name,
                     "seed": seed,
                     "parameters": count_parameters(model),
-                    "latency_ms": latency,
+                    "window_inference_latency_ms": window_latency,
                 }
                 rows.append(
                     _scenario_row(
@@ -276,7 +297,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
         "recall",
         "false_alarm_rate",
         "parameters",
-        "latency_ms",
+        "window_inference_latency_ms",
         "adaptation_accepted",
     ]
     with (output / "metrics.csv").open("w", newline="") as f:
@@ -284,53 +305,94 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
         writer.writeheader()
         writer.writerows(rows)
 
-    summary = _summarize(rows)
-    (output / "summary.json").write_text(json.dumps(summary, indent=2))
+    summary = _summarize(rows, timing_metadata=config["timing"])
+    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     _plot_fault_f1(rows, output / "fault_detection_f1.png")
     return summary
 
 
-def _summarize(rows: list[dict]) -> dict:
-    summary: dict = {}
+def _summarize_model_rows(selected: list[dict]) -> dict:
+    clean = [r for r in selected if r["scenario"] == "clean"]
+    faults = [r for r in selected if r["scenario"] in FAULTS]
+    packet_loss = [r for r in selected if r["scenario"] == "packet_loss"]
+    value_faults = [r for r in selected if r["scenario"] in VALUE_ONLY_FAULTS]
+    mixed = [r for r in selected if r["scenario"] == "mixed"]
+    adaptations = [r for r in selected if r["scenario"] == "adaptation"]
+    per_fault_f1 = {
+        fault: float(np.mean([float(r["f1"]) for r in selected if r["scenario"] == fault]))
+        for fault in FAULTS
+    }
+    return {
+        "clean_rmse_mean": float(np.mean([float(r["rmse"]) for r in clean])),
+        "clean_rmse_std": float(np.std([float(r["rmse"]) for r in clean])),
+        "clean_coverage_90_mean": float(np.mean([float(r["coverage_90"]) for r in clean])),
+        "clean_gaussian_nll_mean": float(np.mean([float(r["gaussian_nll"]) for r in clean])),
+        "clean_gaussian_nll_std": float(np.std([float(r["gaussian_nll"]) for r in clean])),
+        "fault_gaussian_nll_mean": float(np.mean([float(r["gaussian_nll"]) for r in faults])),
+        "fault_f1_mean": float(np.mean([float(r["f1"]) for r in faults])),
+        "packet_loss_f1_mean": float(np.mean([float(r["f1"]) for r in packet_loss])),
+        "value_fault_f1_mean": float(np.mean([float(r["f1"]) for r in value_faults])),
+        "mixed_fault_f1_mean": float(np.mean([float(r["f1"]) for r in mixed])),
+        "per_fault_f1_mean": per_fault_f1,
+        "false_alarm_rate_mean": float(np.mean([float(r["false_alarm_rate"]) for r in clean])),
+        "parameters": int(clean[0]["parameters"]),
+        "window_inference_latency_ms_mean": float(
+            np.mean([float(r["window_inference_latency_ms"]) for r in clean])
+        ),
+        "adaptation_accept_rate": float(
+            np.mean([1.0 if r["adaptation_accepted"] else 0.0 for r in adaptations])
+        ),
+    }
+
+
+def _summarize(rows: list[dict], timing_metadata: dict | None = None) -> dict:
+    summary: dict = {
+        "_metadata": {
+            "schema_version": 2,
+            "timing": timing_metadata,
+            "fault_reporting": {
+                "packet_loss": "uses an explicit missingness signal and is not purely residual-based detection",
+                "value_faults": list(VALUE_ONLY_FAULTS),
+                "mixed": "contains both explicit missingness and value corruption and is reported separately",
+            },
+        }
+    }
     for domain in DOMAINS:
         summary[domain] = {}
         for model in ["lstm", "xlstm"]:
             selected = [r for r in rows if r["domain"] == domain and r["model"] == model]
-            clean = [r for r in selected if r["scenario"] == "clean"]
-            faults = [r for r in selected if r["scenario"] in FAULTS]
-            mixed = [r for r in selected if r["scenario"] == "mixed"]
-            adaptations = [r for r in selected if r["scenario"] == "adaptation"]
-            summary[domain][model] = {
-                "clean_rmse_mean": float(np.mean([float(r["rmse"]) for r in clean])),
-                "clean_rmse_std": float(np.std([float(r["rmse"]) for r in clean])),
-                "clean_coverage_90_mean": float(np.mean([float(r["coverage_90"]) for r in clean])),
-                "fault_f1_mean": float(np.mean([float(r["f1"]) for r in faults])),
-                "mixed_fault_f1_mean": float(np.mean([float(r["f1"]) for r in mixed])),
-                "false_alarm_rate_mean": float(np.mean([float(r["false_alarm_rate"]) for r in clean])),
-                "parameters": int(clean[0]["parameters"]),
-                "latency_ms_mean": float(np.mean([float(r["latency_ms"]) for r in clean])),
-                "adaptation_accept_rate": float(np.mean([1.0 if r["adaptation_accepted"] else 0.0 for r in adaptations])),
-            }
+            summary[domain][model] = _summarize_model_rows(selected)
     return summary
 
 
 def _plot_fault_f1(rows: list[dict], path: Path) -> None:
     labels = []
-    values = []
+    packet_values = []
+    value_values = []
+    mixed_values = []
     for domain in DOMAINS:
         for model in ["lstm", "xlstm"]:
-            faults = [
-                float(r["f1"])
-                for r in rows
-                if r["domain"] == domain and r["model"] == model and r["scenario"] in FAULTS
-            ]
+            selected = [r for r in rows if r["domain"] == domain and r["model"] == model]
             labels.append(f"{domain}\n{model}")
-            values.append(float(np.mean(faults)))
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(labels, values)
-    ax.set_ylabel("Mean fault-detection F1")
+            packet_values.append(
+                float(np.mean([float(r["f1"]) for r in selected if r["scenario"] == "packet_loss"]))
+            )
+            value_values.append(
+                float(np.mean([float(r["f1"]) for r in selected if r["scenario"] in VALUE_ONLY_FAULTS]))
+            )
+            mixed_values.append(float(np.mean([float(r["f1"]) for r in selected if r["scenario"] == "mixed"])))
+
+    x = np.arange(len(labels))
+    width = 0.25
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ax.bar(x - width, packet_values, width, label="Packet loss (explicit missingness)")
+    ax.bar(x, value_values, width, label="Value-only fault mean")
+    ax.bar(x + width, mixed_values, width, label="Mixed fault")
+    ax.set_xticks(x, labels)
+    ax.set_ylabel("Fault-detection F1")
     ax.set_ylim(0, 1)
-    ax.set_title("Residual-based assurance under controlled telemetry faults")
+    ax.set_title("Fault detection by evidence type")
+    ax.legend()
     fig.tight_layout()
     fig.savefig(path, dpi=160)
     plt.close(fig)
