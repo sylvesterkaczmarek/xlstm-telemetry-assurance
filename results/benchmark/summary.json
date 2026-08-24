@@ -1,25 +1,73 @@
 {
+  "_metadata": {
+    "schema_version": 2,
+    "timing": {
+      "metric": "window_inference_latency_ms",
+      "device": "host_cpu",
+      "scope": "complete_model_forward_pass_for_one_input_window",
+      "input_window_length": 24,
+      "hardware_dependent": true,
+      "spacecraft_or_robot_realtime_timing_measured": false,
+      "wcet_measured": false
+    },
+    "fault_reporting": {
+      "packet_loss": "uses an explicit missingness signal and is not purely residual-based detection",
+      "value_faults": [
+        "spike",
+        "stuck",
+        "drift",
+        "regime_shift"
+      ],
+      "mixed": "contains both explicit missingness and value corruption and is reported separately"
+    }
+  },
   "spacecraft": {
     "lstm": {
       "clean_rmse_mean": 0.23187523583571115,
       "clean_rmse_std": 0.0026626846910996157,
       "clean_coverage_90_mean": 0.9957264957264957,
+      "clean_gaussian_nll_mean": 0.4942061205705007,
+      "clean_gaussian_nll_std": 0.037129168232864114,
+      "fault_gaussian_nll_mean": 0.6041993482245339,
       "fault_f1_mean": 0.23601822923681143,
+      "packet_loss_f1_mean": 0.9132569558101472,
+      "value_fault_f1_mean": 0.046175233698142505,
       "mixed_fault_f1_mean": 0.3181514848181515,
+      "per_fault_f1_mean": {
+        "packet_loss": 0.9132569558101472,
+        "spike": 0.07714285714285714,
+        "stuck": 0.02907022055958226,
+        "drift": 0.028756674294431725,
+        "regime_shift": 0.04973118279569893,
+        "mixed": 0.3181514848181515
+      },
       "false_alarm_rate_mean": 0.011834319526627219,
       "parameters": 6284,
-      "latency_ms_mean": 0.13619513333335614,
+      "window_inference_latency_ms_mean": 0.1316615638883276,
       "adaptation_accept_rate": 1.0
     },
     "xlstm": {
       "clean_rmse_mean": 0.2851516306400299,
       "clean_rmse_std": 0.007344621639080923,
       "clean_coverage_90_mean": 0.9949868507560815,
+      "clean_gaussian_nll_mean": 0.4953865011533101,
+      "clean_gaussian_nll_std": 0.030644269261522115,
+      "fault_gaussian_nll_mean": 0.647403308086925,
       "fault_f1_mean": 0.23306028223277708,
+      "packet_loss_f1_mean": 0.9164598842018196,
+      "value_fault_f1_mean": 0.04600312487720845,
       "mixed_fault_f1_mean": 0.29788930968600913,
+      "per_fault_f1_mean": {
+        "packet_loss": 0.9164598842018196,
+        "spike": 0.07897435897435898,
+        "stuck": 0.03616241914114254,
+        "drift": 0.02860083823396734,
+        "regime_shift": 0.04027488315936494,
+        "mixed": 0.29788930968600913
+      },
       "false_alarm_rate_mean": 0.010848126232741617,
       "parameters": 6244,
-      "latency_ms_mean": 1.195583405555567,
+      "window_inference_latency_ms_mean": 1.1398984666672936,
       "adaptation_accept_rate": 0.0
     }
   },
@@ -28,22 +76,48 @@
       "clean_rmse_mean": 0.3201419413089752,
       "clean_rmse_std": 0.0071033851403586755,
       "clean_coverage_90_mean": 0.9861111111111112,
+      "clean_gaussian_nll_mean": 0.5747527480125427,
+      "clean_gaussian_nll_std": 0.04204302673250606,
+      "fault_gaussian_nll_mean": 0.676908963256412,
       "fault_f1_mean": 0.21618242457903236,
+      "packet_loss_f1_mean": 0.9164598842018196,
+      "value_fault_f1_mean": 0.024844788195099457,
       "mixed_fault_f1_mean": 0.2812555104919767,
+      "per_fault_f1_mean": {
+        "packet_loss": 0.9164598842018196,
+        "spike": 0.07802469135802469,
+        "stuck": 0.0,
+        "drift": 0.0,
+        "regime_shift": 0.021354461422373138,
+        "mixed": 0.2812555104919767
+      },
       "false_alarm_rate_mean": 0.011341222879684419,
       "parameters": 6284,
-      "latency_ms_mean": 0.12706412222216715,
+      "window_inference_latency_ms_mean": 0.12971408888865374,
       "adaptation_accept_rate": 1.0
     },
     "xlstm": {
       "clean_rmse_mean": 0.36090407768885296,
       "clean_rmse_std": 0.011704785734016168,
       "clean_coverage_90_mean": 0.9797008547008547,
+      "clean_gaussian_nll_mean": 0.5006358623504639,
+      "clean_gaussian_nll_std": 0.040295387156530416,
+      "fault_gaussian_nll_mean": 0.676101330253813,
       "fault_f1_mean": 0.2169569814649507,
+      "packet_loss_f1_mean": 0.9198067632850243,
+      "value_fault_f1_mean": 0.025161623437189667,
       "mixed_fault_f1_mean": 0.28128863175592145,
+      "per_fault_f1_mean": {
+        "packet_loss": 0.9198067632850243,
+        "spike": 0.07905982905982906,
+        "stuck": 0.0,
+        "drift": 0.0,
+        "regime_shift": 0.021586664688929613,
+        "mixed": 0.28128863175592145
+      },
       "false_alarm_rate_mean": 0.010848126232741617,
       "parameters": 6244,
-      "latency_ms_mean": 1.1397164194445646,
+      "window_inference_latency_ms_mean": 1.1645232666675536,
       "adaptation_accept_rate": 1.0
     }
   }

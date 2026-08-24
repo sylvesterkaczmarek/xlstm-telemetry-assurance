@@ -1,0 +1,83 @@
+{
+  "benchmark": {
+    "adaptation_learning_rate": 0.015,
+    "adaptation_steps": 10,
+    "adaptation_tolerance": 0.01,
+    "calibration_quantile": 0.99,
+    "domains": [
+      "spacecraft",
+      "robotics"
+    ],
+    "epochs": 10,
+    "eval_length": 700,
+    "faults": [
+      "packet_loss",
+      "spike",
+      "stuck",
+      "drift",
+      "regime_shift",
+      "mixed"
+    ],
+    "hidden_size": 32,
+    "missingness_score_boost": 4.0,
+    "seeds": [
+      11,
+      29,
+      47
+    ],
+    "sequence_length": 24,
+    "smoke": false,
+    "timing": {
+      "device": "host_cpu",
+      "hardware_dependent": true,
+      "input_window_length": 24,
+      "metric": "window_inference_latency_ms",
+      "scope": "complete_model_forward_pass_for_one_input_window",
+      "spacecraft_or_robot_realtime_timing_measured": false,
+      "wcet_measured": false
+    },
+    "train_length": 1050,
+    "training_learning_rate": 0.003,
+    "value_only_faults": [
+      "spike",
+      "stuck",
+      "drift",
+      "regime_shift"
+    ],
+    "window_inference_latency_repeats": 120
+  },
+  "cpu": {
+    "logical_cores": 5,
+    "model": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "determinism": {
+    "cuda_used": false,
+    "interop_threads_configured": true,
+    "requested_num_interop_threads": 1,
+    "torch_deterministic_algorithms": true,
+    "torch_num_interop_threads": 1,
+    "torch_num_threads": 1
+  },
+  "environment_fingerprint_sha256": "07909c0b522420c91fdad7b62318c9e74d41e04ef01bcc185978fe21b3f547d2",
+  "git": {
+    "available": false,
+    "commit_sha": "e3a5d04359f3b285c0566df2b5fc86ddfe20cf84",
+    "dirty": null
+  },
+  "packages": {
+    "matplotlib": "3.10.8",
+    "numpy": "2.3.5",
+    "torch": "2.10.0+cpu"
+  },
+  "platform": {
+    "machine": "x86_64",
+    "release": "6.18.35",
+    "system": "Linux"
+  },
+  "python": {
+    "executable": "python",
+    "implementation": "CPython",
+    "version": "3.13.5"
+  },
+  "schema_version": 1
+}
