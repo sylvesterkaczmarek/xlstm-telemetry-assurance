@@ -9,92 +9,56 @@
 
 Controlled PyTorch experiments testing whether an xLSTM-style streaming forecaster can provide useful prediction and runtime-assurance signals under telemetry faults, distribution shift and guarded adaptation. Spacecraft telemetry is the flagship physical-system track, with robotics used as a transfer test.
 
-The project deliberately sits between fundamental sequence modelling and physical-world autonomy. It does not turn a generic forecasting demo into a "space AI" project by relabelling the data. The benchmark makes physical-system constraints part of the experiment: missing telemetry, sensor corruption, slow drift, abrupt regime changes, uncertainty calibration, online adaptation and rollback.
-
-## At a glance
-
-```mermaid
-flowchart LR
-    A["Physical telemetry stream"] --> B["Values + missingness mask"]
-    B --> C["LSTM baseline"]
-    B --> D["xLSTM-style forecaster"]
-    C --> E["Mean + uncertainty"]
-    D --> E
-    E --> F["Standardized residual"]
-    F --> G["Fault score"]
-    D --> H["Candidate head adaptation"]
-    H --> I["Guard buffer"]
-    I -->|passes| J["Accept update"]
-    I -->|degrades| K["Rollback"]
-```
+The benchmark is intentionally small and inspectable. It uses structured synthetic telemetry rather than claiming flight-realistic or robot-deployment evidence.
 
 ## Project overview
 
 - **Spacecraft track:** coupled power, thermal, reaction-wheel, pointing and payload telemetry.
 - **Robotics track:** joint motion, motor current and temperature, vibration and tool load.
 - **Faults:** packet loss, spikes, stuck sensors, gradual drift, regime shift and a mixed-fault stream.
-- **Forecasting:** ordinary LSTM versus a compact stabilized xLSTM/sLSTM-style recurrent model.
+- **Forecasting:** ordinary LSTM versus a compact stabilised xLSTM/sLSTM-style recurrent model.
 - **Uncertainty:** per-channel Gaussian mean and predictive scale trained with negative log-likelihood.
-- **Runtime assurance:** anomaly scores from uncertainty-normalized residuals plus explicit missingness.
-- **Adaptation:** head-only candidate updates accepted only when a disjoint guard buffer does not degrade beyond tolerance.
-- **Reproducibility:** deterministic generators, fixed seeds, deterministic PyTorch CPU settings, machine-readable run provenance, tests and CI.
-
-## Why this is useful
-
-A telemetry forecaster is more operationally useful when it can say both **what it expects next** and **how surprising the observation is**. That same signal can support fault detection, adaptation triggers and rollback decisions without requiring a separate opaque anomaly model.
-
-The repository also tests whether the mechanism transfers between two different physical-system domains. The goal is not to claim that synthetic spacecraft or robot telemetry is flight-realistic. The goal is to expose the forecasting and assurance logic to structured physical dynamics and controlled failure modes that are easy to reproduce and inspect.
-
-## xLSTMTime-style model
-
-The central model uses a stabilized exponential-gating recurrent cell with a normalizer and log-space stabilizer. This keeps the xLSTM idea that input and forget gates can operate exponentially without allowing direct exponentials to dominate the recurrence.
-
-A residual path carries the most recent normalized telemetry value into the forecast head. The probabilistic head predicts both mean and scale for every telemetry channel.
-
-```python
-m_new = torch.maximum(i_log, f_log + m)
-i = torch.exp(torch.clamp(i_log - m_new, min=-20.0, max=0.0))
-f = torch.exp(torch.clamp(f_log + m - m_new, min=-20.0, max=0.0))
-c_new = f * c + i * z
-n_new = f * n + i
-normalized = c_new / torch.clamp(n_new, min=1e-6)
-h_new = o * normalized
-```
-
-See [`src/xlstm_telemetry_assurance/models.py`](src/xlstm_telemetry_assurance/models.py).
+- **Runtime assurance:** uncertainty-normalised residuals plus explicit missingness.
+- **Adaptation:** head-only candidate updates accepted only when a disjoint guard buffer stays within tolerance.
+- **Reproducibility:** fixed seeds, deterministic CPU settings, machine-readable provenance, tests and CI.
 
 ## Experimental setup
 
-The default benchmark runs three seeds. Each model is trained only on clean telemetry. A separate clean stream calibrates the anomaly threshold. The same model is then evaluated against six controlled fault conditions in both physical-system domains.
+The default benchmark runs seeds `11`, `29` and `47`. Each model is trained on clean telemetry, a separate clean sequence calibrates the anomaly threshold, and a separate test sequence is evaluated under six controlled fault conditions.
 
-Forecast accuracy is measured against the known clean synthetic trajectory. Runtime anomaly scores, however, are computed only from telemetry that would actually be available to the system: uncertainty-normalized residuals against the observed measurement, with missing target channels excluded from the residual and missingness scored explicitly. The clean counterfactual is used only for benchmark evaluation and fault ground truth.
+Runtime residuals use the **observed telemetry available to the detector**. The clean counterfactual is retained only for benchmark error metrics and fault ground truth.
 
-Guarded adaptation is evaluated separately. The benchmark exposes trusted clean targets only because this is a controlled synthetic experiment; real deployment would require an independent trusted guard signal.
+Packet loss is different from the value-only faults. Missing target channels are explicitly represented and receive a direct missingness score contribution. Packet-loss F1 therefore measures a detector with explicit missingness evidence, not purely learned residual anomaly detection. The mixed scenario contains both missingness and value corruption and is reported separately.
 
 ## Results snapshot
 
-The repository includes machine-readable results produced by the checked-in benchmark. See [`results/benchmark/summary.json`](results/benchmark/summary.json) and [`results/benchmark/metrics.csv`](results/benchmark/metrics.csv).
+Machine-readable results are in [`results/benchmark/summary.json`](results/benchmark/summary.json) and [`results/benchmark/metrics.csv`](results/benchmark/metrics.csv).
 
-<!-- RESULTS_TABLE_START -->
-| Domain | Model | Clean RMSE ↓ | 90% coverage | Mean fault F1 ↑ | Clean false-alarm rate | Parameters | CPU latency / step |
-|---|---|---:|---:|---:|---:|---:|---:|
-| Spacecraft | LSTM | **0.232 ± 0.003** | 0.996 | **0.236** | 0.0118 | 6,284 | **0.14 ms** |
-| Spacecraft | xLSTM-style | 0.285 ± 0.007 | 0.995 | 0.233 | **0.0108** | **6,244** | 1.20 ms |
-| Robotics | LSTM | **0.320 ± 0.007** | 0.986 | 0.216 | 0.0113 | 6,284 | **0.13 ms** |
-| Robotics | xLSTM-style | 0.361 ± 0.012 | 0.980 | **0.217** | **0.0108** | **6,244** | 1.14 ms |
+### Forecasting and host timing
 
-Values are means across three deterministic seeds. RMSE is measured in standardized telemetry units. CPU latency is hardware-dependent and is reported only for the machine used to generate the checked-in run.
+| Domain | Model | Clean RMSE ↓ | 90% coverage | Clean Gaussian NLL ↓ | Parameters | Host CPU window latency |
+|---|---|---:|---:|---:|---:|---:|
+| Spacecraft | LSTM | **0.232 ± 0.003** | 0.996 | **0.494** | 6,284 | **0.13 ms** |
+| Spacecraft | xLSTM-style | 0.285 ± 0.007 | 0.995 | 0.495 | **6,244** | 1.14 ms |
+| Robotics | LSTM | **0.320 ± 0.007** | 0.986 | 0.575 | 6,284 | **0.13 ms** |
+| Robotics | xLSTM-style | 0.361 ± 0.012 | 0.980 | **0.501** | **6,244** | 1.16 ms |
 
-**Forecasting result.** On this controlled benchmark, the ordinary LSTM has lower clean one-step RMSE in both physical-system tracks. The compact xLSTM-style recurrence uses slightly fewer trainable parameters, but it is slower in this straightforward Python recurrent implementation.
+Latency is the mean wall-clock time for **one complete model forward pass over one 24-sample input window on the recorded host CPU**. It is hardware- and load-dependent. It is not recurrent-timestep latency, spacecraft or robot real-time timing, or WCET.
 
-**Assurance result.** Once fault scores are computed from the observed telemetry available at runtime, neither recurrent model has a meaningful overall fault-detection advantage. Mean F1 is nearly identical in both domains. Packet loss is detected reliably because missingness is explicit, while value-only faults such as drift, stuck sensors and regime shifts remain difficult for this simple residual detector.
+### Fault detection
 
-The guarded-adaptation controller accepted 9 of 12 candidate updates across the benchmark and rolled back the other 3 after guard loss worsened beyond tolerance. This demonstrates the rollback mechanism, not deployment-safe online learning.
-<!-- RESULTS_TABLE_END -->
+| Domain | Model | Packet-loss F1 | Value-only F1 mean | Mixed F1 | Overall six-fault F1 | Clean false-alarm rate |
+|---|---|---:|---:|---:|---:|---:|
+| Spacecraft | LSTM | 0.913 | **0.046** | **0.318** | **0.236** | 0.0118 |
+| Spacecraft | xLSTM-style | **0.916** | 0.046 | 0.298 | 0.233 | **0.0108** |
+| Robotics | LSTM | 0.916 | 0.025 | 0.281 | 0.216 | 0.0113 |
+| Robotics | xLSTM-style | **0.920** | **0.025** | **0.281** | **0.217** | **0.0108** |
+
+The value-only mean covers `spike`, `stuck`, `drift` and `regime_shift`. Per-fault means are recorded in `summary.json`. The very low value-only F1 shows that this simple residual detector is weak on those faults despite strong packet-loss detection from the explicit missingness signal.
+
+The guarded-adaptation experiment accepted 9 of 12 candidate updates and rolled back the other 3. This demonstrates the rollback mechanism, not deployment-safe online learning.
 
 ![Fault detection F1](results/benchmark/fault_detection_f1.png)
-
-The benchmark is intentionally small. Its main result is methodological rather than architectural: forecast accuracy and residual-based assurance must be evaluated separately, and anomaly scoring must use only information available at runtime. The model comparison should not be treated as evidence that one architecture is generally superior for spacecraft or robotics telemetry.
 
 ## Quick start
 
@@ -108,14 +72,12 @@ python -m pytest
 python -m xlstm_telemetry_assurance.benchmark --output results/benchmark
 ```
 
-`pyproject.toml` is the authoritative package and dependency definition. For the exact Python 3.12 reference environment validated by CI:
+`pyproject.toml` is the authoritative dependency definition. For the pinned Python 3.12 reference environment used by CI:
 
 ```bash
 python -m pip install -r requirements-reference.txt
 python -m pip install --no-build-isolation --no-deps -e .
 ```
-
-The reference file contains exact direct pins for reproducibility; it does not replace the supported dependency ranges in `pyproject.toml`.
 
 For a faster pipeline check:
 
@@ -133,75 +95,32 @@ results/benchmark/
 └── summary.json
 ```
 
-`metrics.csv` retains per-seed measurements, including Gaussian NLL, so scenario-level values can be audited. `summary.json` contains the compact result used by the README. `run_environment.json` records Git state, Python/platform/CPU information, package versions, effective benchmark configuration, deterministic-execution settings and a stable SHA-256 fingerprint.
-
-## Repository layout
-
-```text
-xlstm-telemetry-assurance/
-├── .github/workflows/ci.yml
-├── assets/
-│   └── social/
-│       └── github-social-card-xlstm-telemetry-assurance.png
-├── docs/
-│   ├── findings.md
-│   ├── method.md
-│   ├── references.md
-│   └── reproducibility.md
-├── results/benchmark/
-├── src/xlstm_telemetry_assurance/
-│   ├── benchmark.py
-│   ├── data.py
-│   ├── metrics.py
-│   ├── models.py
-│   ├── provenance.py
-│   └── training.py
-├── tests/
-├── CITATION.cff
-├── LICENSE
-├── Makefile
-├── pyproject.toml
-├── requirements-reference.txt
-└── README.md
-```
+`metrics.csv` retains per-seed scenario measurements. `summary.json` records aggregate forecasting, Gaussian NLL, packet-loss, value-only, mixed and per-fault metrics, together with timing semantics. `run_environment.json` records Git state when available, Python/platform/CPU information, package versions, benchmark configuration, deterministic settings and a SHA-256 fingerprint.
 
 ## Reproducibility and validation
 
-- deterministic synthetic telemetry for each seed;
-- explicit clean versus corrupted telemetry semantics;
-- separate clean calibration stream;
-- multiple benchmark seeds;
-- PyTorch deterministic algorithms and single-thread CPU execution for benchmark runs;
-- machine-readable environment/configuration provenance with a stable fingerprint;
-- CI on Python 3.10, 3.11 and the pinned Python 3.12 reference environment;
-- compile, Ruff, tests, package build and an end-to-end smoke benchmark in CI;
-- machine-readable CSV and JSON results;
-- no accelerator requirement.
+CI exercises Python 3.10, 3.11 and 3.12 with compile checks, Ruff, the full test suite, package build on Python 3.12 and an end-to-end smoke benchmark. Benchmark runs use deterministic PyTorch algorithms and single-thread CPU execution where supported.
 
-These controls improve repeatability but do not imply bit-for-bit identity across different operating systems, CPU libraries, PyTorch builds or hardware.
+These controls improve repeatability but do not imply bit-for-bit identity across operating systems, CPU libraries, PyTorch builds or hardware.
 
-See [`docs/reproducibility.md`](docs/reproducibility.md) and [`docs/findings.md`](docs/findings.md).
+See [`docs/reproducibility.md`](docs/reproducibility.md), [`docs/method.md`](docs/method.md) and [`docs/findings.md`](docs/findings.md).
 
 ## What this repository does not claim
 
 - The synthetic generators are not spacecraft or robotics digital twins.
 - Forecast-residual anomaly detection is not sufficient mission assurance.
-- Guarded adaptation assumes access to a trusted guard signal; the benchmark's clean counterfactual target is available only because the faults are synthetic.
+- Packet-loss performance is not evidence of learned value-fault detection because missingness is explicit.
+- Guarded adaptation assumes access to a trusted guard signal; the clean counterfactual target exists only because the benchmark is synthetic.
 - The compact recurrent cell is an xLSTM-style research implementation, not a drop-in copy of the official xLSTM library.
-- Results on this benchmark do not establish general xLSTM superiority over LSTM, Transformers or time-series foundation models.
+- Host CPU window timing is not spacecraft or robot timing and is not WCET.
+- Results do not establish general xLSTM superiority over LSTM, Transformers or time-series foundation models.
 - Passing the benchmark is not evidence of flight readiness, functional safety certification or deployment security.
-
-## Extending
-
-Natural next steps include replacing the synthetic spacecraft track with publication-safe real mission telemetry, testing irregular sampling rather than fixed-rate masking, adding calibration methods for non-Gaussian residuals, and comparing against a modern pretrained time-series model under identical fault conditions.
 
 ## References
 
 See [`docs/references.md`](docs/references.md) for the xLSTM and xLSTMTime papers that motivate the recurrent mechanism.
 
 ## Cite this repository
-
-If you use or adapt this repository, please cite
 
 > Kaczmarek, S. (2024). *xLSTM Telemetry Assurance*. GitHub. https://github.com/sylvesterkaczmarek/xlstm-telemetry-assurance
 
