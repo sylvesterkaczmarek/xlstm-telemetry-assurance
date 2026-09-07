@@ -7,9 +7,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      MPLBACKEND: Agg
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -21,14 +25,18 @@ jobs:
         if: matrix.python-version != '3.12'
         run: |
           python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -e .[dev]
+          python -m pip check
 
       - name: Install pinned Python 3.12 reference environment
         if: matrix.python-version == '3.12'
         run: |
           python -m pip install --upgrade pip
+          python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements-reference.txt
           python -m pip install --no-build-isolation --no-deps -e .
+          python -m pip check
 
       - name: Compile
         run: python -m compileall -q src tests
@@ -62,4 +70,44 @@ jobs:
           assert data["determinism"]["torch_deterministic_algorithms"] is True
           assert data["determinism"]["torch_num_threads"] == 1
           assert len(data["environment_fingerprint_sha256"]) == 64
+          assert data["source_sha256"]
           PY
+
+  package:
+    name: Build and verify installed package
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build and install wheel
+        run: |
+          python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements-reference.txt twine
+          python -m build --no-isolation
+          python -m twine check dist/*
+          python -m pip install --no-deps dist/*.whl
+          python -m pip check
+      - name: Verify installed source matches checkout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xlstm_telemetry_assurance
+          installed = Path(xlstm_telemetry_assurance.__file__).resolve().parent
+          source = Path('src/xlstm_telemetry_assurance').resolve()
+          assert installed != source
+          for module in source.glob('*.py'):
+              assert module.read_bytes() == (installed / module.name).read_bytes(), module
+          PY
+      - name: Test installed wheel
+        run: python -m pytest
+      - name: Run installed benchmark outside checkout
+        working-directory: /tmp
+        run: python -m xlstm_telemetry_assurance.benchmark --smoke --output /tmp/installed-telemetry-smoke

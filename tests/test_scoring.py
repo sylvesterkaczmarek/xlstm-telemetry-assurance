@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
@@ -6,6 +7,7 @@ from xlstm_telemetry_assurance.benchmark import (
     FAULTS,
     VALUE_ONLY_FAULTS,
     _scenario_row,
+    _adaptation_windows,
     _score_stream,
     _summarize_model_rows,
     _timing_metadata,
@@ -147,3 +149,76 @@ def test_summary_separates_packet_loss_value_faults_and_mixed_and_propagates_nll
     assert summary["clean_gaussian_nll_mean"] == 1.0
     assert summary["fault_gaussian_nll_mean"] == np.mean([2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
     assert summary["window_inference_latency_ms_mean"] == 0.4
+
+
+def test_adaptation_and_guard_buffers_share_no_raw_timestamps():
+    timeline = np.arange(100, dtype=np.float32).reshape(-1, 1)
+    adapt_x, adapt_y, guard_x, guard_y = _adaptation_windows(timeline, timeline, 8)
+    adaptation_times = set(adapt_x.ravel()) | set(adapt_y.ravel())
+    guard_times = set(guard_x.ravel()) | set(guard_y.ravel())
+    assert not adaptation_times & guard_times
+    assert max(adaptation_times) == 69
+    assert min(guard_times) == 70
+    assert guard_y[0, 0] == 78
+
+
+@pytest.mark.parametrize("reading,flag", [(np.nan, False), (np.inf, False), (999.0, True)])
+def test_unavailable_target_has_missingness_score_without_placeholder_residual(reading, flag):
+    clean = np.zeros((12, 1), dtype=np.float32)
+    observed = clean.copy()
+    observed[7, 0] = reading
+    missing = np.zeros_like(clean, dtype=bool)
+    missing[7, 0] = flag
+    mask = np.zeros(len(clean), dtype=bool)
+    mask[7] = True
+    arguments = dict(model=ZeroForecaster(1), clean=clean, observed=observed, missing=missing,
+                     fault_mask=mask, mean=np.zeros(1), std=np.ones(1), seq_len=3)
+    assert _score_stream(**arguments, threshold=2)["f1"] == 1
+    assert _score_stream(**arguments, threshold=5)["recall"] == 0
+
+
+def _complete_cohort(seed=11):
+    rows = [_row("clean", 0, 1), _row("adaptation", 0, "", accepted=False)]
+    rows += [_row(fault, 0.5, 1) for fault in FAULTS]
+    return [{**row, "seed": seed} for row in rows]
+
+
+def test_summary_uses_sample_sd_and_distinct_seed_count():
+    rows = _complete_cohort(11) + _complete_cohort(29)
+    rows[8]["rmse"] = 3.0
+    result = _summarize_model_rows(rows)
+    assert result["clean_rmse_mean"] == 2
+    assert result["clean_rmse_std"] == pytest.approx(np.sqrt(2))
+    assert result["seed_count"] == 2
+    assert result["adaptation_accept_rate"] == 0
+
+
+def test_summary_rejects_duplicate_incomplete_and_invalid_cohorts():
+    rows = _complete_cohort()
+    for malformed in ([], rows + [rows[0]], rows[:-1], rows + _complete_cohort(29)[:-1]):
+        with pytest.raises(ValueError):
+            _summarize_model_rows(malformed)
+    for key, value in (("rmse", float("nan")), ("domain", "robotics")):
+        with pytest.raises(ValueError):
+            _summarize_model_rows([{**rows[0], key: value}, *rows[1:]])
+    with pytest.raises(ValueError, match="must be a boolean"):
+        _summarize_model_rows([rows[0], {**rows[1], "adaptation_accepted": "False"}, *rows[2:]])
+
+
+def test_failed_benchmark_preserves_previous_evidence(tmp_path, monkeypatch):
+    from xlstm_telemetry_assurance import benchmark
+
+    output = tmp_path / "reference"
+    output.mkdir()
+    names = ("metrics.csv", "summary.json", "fault_detection_f1.png", "run_environment.json")
+    for name in names:
+        (output / name).write_bytes(b"previous checked evidence")
+
+    def fail(staging, smoke=False):
+        (staging / "run_environment.json").write_text("incomplete candidate run")
+        raise FloatingPointError("failed training")
+
+    monkeypatch.setattr(benchmark, "_run_benchmark", fail)
+    with pytest.raises(FloatingPointError, match="failed training"):
+        benchmark.run_benchmark(output)
+    assert all((output / name).read_bytes() == b"previous checked evidence" for name in names)

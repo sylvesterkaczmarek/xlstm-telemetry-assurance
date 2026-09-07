@@ -34,6 +34,8 @@ ROBOTICS_CHANNELS = (
 
 
 def generate_clean_telemetry(domain: str, length: int, seed: int) -> np.ndarray:
+    if type(length) is not int or length < 1:
+        raise ValueError("length must be a positive integer")
     rng = np.random.default_rng(seed)
     if domain == "spacecraft":
         return _spacecraft(length, rng)
@@ -110,13 +112,17 @@ def _robotics(length: int, rng: np.random.Generator) -> np.ndarray:
 
 
 def inject_fault(clean: np.ndarray, fault: str, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    clean = _matrix(clean, "clean", finite=True)
+    required_channels = {"packet_loss": 2, "stuck": 3, "mixed": 2}.get(fault, 1)
+    if clean.shape[1] < required_channels:
+        raise ValueError(f"{fault} requires at least {required_channels} telemetry channels")
     observed = clean.copy()
     missing = np.zeros_like(clean, dtype=bool)
     fault_mask = np.zeros(clean.shape[0], dtype=bool)
     length, channels = clean.shape
     start = int(length * 0.58)
-    duration = max(8, int(length * 0.12))
-    stop = min(length, start + duration)
+    stop = min(length, start + max(8, int(length * 0.12)))
+    duration = stop - start
 
     if fault == "packet_loss":
         ch = 1
@@ -165,8 +171,26 @@ def inject_fault(clean: np.ndarray, fault: str, seed: int) -> tuple[np.ndarray, 
     return observed, missing, fault_mask
 
 
+def _matrix(values: np.ndarray, name: str, *, finite: bool = False) -> np.ndarray:
+    values = np.asarray(values)
+    if values.ndim != 2 or not all(values.shape) or values.dtype.kind not in "fiu":
+        raise ValueError(f"{name} must be a nonempty real numeric matrix")
+    if finite and not np.isfinite(values).all():
+        raise ValueError(f"{name} must contain only finite values")
+    return values
+
+
+def effective_missingness(observed: np.ndarray, missing: np.ndarray) -> np.ndarray:
+    """Treat both explicit masks and nonfinite readings as unavailable."""
+    observed = _matrix(observed, "observed")
+    missing = np.asarray(missing)
+    if missing.shape != observed.shape or missing.dtype.kind != "b":
+        raise ValueError("missing must be a boolean matrix matching observed")
+    return missing | ~np.isfinite(observed)
+
+
 def forward_fill(values: np.ndarray) -> np.ndarray:
-    filled = values.copy()
+    filled = _matrix(values, "values").astype(np.float64, copy=True)
     for ch in range(filled.shape[1]):
         last = 0.0
         valid_seen = False
@@ -180,7 +204,18 @@ def forward_fill(values: np.ndarray) -> np.ndarray:
 
 
 def standardize(values: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
-    return ((values - mean) / std).astype(np.float32)
+    values = _matrix(values, "values", finite=True)
+    mean, std = np.asarray(mean), np.asarray(std)
+    shape = (values.shape[1],)
+    if mean.shape != shape or std.shape != shape or mean.dtype.kind not in "fiu" or std.dtype.kind not in "fiu":
+        raise ValueError("mean and std must be real vectors matching the telemetry channels")
+    if not np.isfinite(mean).all() or not np.isfinite(std).all() or np.any(std <= 0):
+        raise ValueError("mean must be finite and std must be finite and positive")
+    with np.errstate(over="ignore", invalid="ignore"):
+        result = ((values.astype(np.float64) - mean) / std).astype(np.float32)
+    if not np.isfinite(result).all():
+        raise ValueError("standardized telemetry exceeds finite float32 range")
+    return result
 
 
 def prepare_observed_inputs(
@@ -189,13 +224,22 @@ def prepare_observed_inputs(
     mean: np.ndarray,
     std: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    filled = forward_fill(observed)
+    missing = effective_missingness(observed, missing)
+    masked = np.asarray(observed, dtype=np.float64).copy()
+    masked[missing] = np.nan
+    filled = forward_fill(masked)
     standardized = standardize(filled, mean, std)
     inputs = np.concatenate([standardized, missing.astype(np.float32)], axis=1)
     return inputs.astype(np.float32), standardized
 
 
 def build_windows(inputs: np.ndarray, targets: np.ndarray, seq_len: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    inputs = _matrix(inputs, "inputs", finite=True)
+    targets = _matrix(targets, "targets", finite=True)
+    if len(inputs) != len(targets):
+        raise ValueError("inputs and targets must have matching timeline lengths")
+    if type(seq_len) is not int or not 0 < seq_len < len(inputs):
+        raise ValueError("seq_len must be a positive integer shorter than the timeline")
     xs, ys, indices = [], [], []
     for i in range(seq_len, len(inputs)):
         xs.append(inputs[i - seq_len : i])

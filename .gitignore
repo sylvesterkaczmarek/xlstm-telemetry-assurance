@@ -10,3 +10,9 @@ venv/
 .vscode/
 *.log
 results/tmp/
+results/local/
+results/smoke/
+results/ci-smoke/
+build/
+dist/
+.ruff_cache/

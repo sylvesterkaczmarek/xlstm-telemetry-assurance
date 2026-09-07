@@ -4,14 +4,14 @@ The checked-in benchmark is a controlled synthetic experiment rather than a depl
 
 ## Forecasting
 
-Across three deterministic seeds, the ordinary LSTM has lower clean one-step RMSE in both telemetry domains.
+After regenerating the benchmark with the corrected recurrence and disjoint adaptation/guard timelines, across three deterministic seeds, the ordinary LSTM has lower clean one-step RMSE in both telemetry domains.
 
 | Domain | LSTM RMSE | xLSTM-style RMSE | LSTM Gaussian NLL | xLSTM-style Gaussian NLL |
 |---|---:|---:|---:|---:|
-| Spacecraft | **0.232 ± 0.003** | 0.285 ± 0.007 | **0.494** | 0.495 |
-| Robotics | **0.320 ± 0.007** | 0.361 ± 0.012 | 0.575 | **0.501** |
+| Spacecraft | **0.232 ± 0.003** | 0.285 ± 0.009 | **0.494** | 0.495 |
+| Robotics | **0.320 ± 0.009** | 0.361 ± 0.014 | 0.575 | **0.501** |
 
-RMSE is expressed in standardised telemetry units. Gaussian NLL captures both mean prediction and predicted scale, so its ranking need not match RMSE exactly.
+RMSE is expressed in standardised telemetry units. The ± values are sample standard deviations across three distinct seeds, describing variability in these runs rather than confidence intervals. Gaussian NLL captures both mean prediction and predicted scale, so its ranking need not match RMSE exactly.
 
 ## Fault detection
 
@@ -30,7 +30,7 @@ The main result is that the strong packet-loss number is driven by explicit miss
 
 ## Guarded adaptation
 
-The guarded head-adaptation experiment generated 12 candidate updates. Nine were accepted and three were rolled back after guard loss exceeded the allowed tolerance.
+The guarded head-adaptation experiment generated 12 candidate updates. Nine were accepted and three were rolled back after guard loss exceeded the allowed tolerance. The CSV retains the baseline and candidate guard losses so every decision can be checked. Adaptation and guard windows share no raw timestamps, although their neighbouring timeline segments can remain correlated.
 
 This demonstrates rollback behaviour only. It is not evidence that the adaptation policy is deployment-safe because the synthetic experiment has access to a trusted clean counterfactual target.
 
@@ -44,6 +44,6 @@ The benchmark supports three narrow conclusions:
 
 1. The compact xLSTM-style recurrence can be evaluated reproducibly, but this implementation does not outperform the ordinary LSTM on clean RMSE.
 2. Packet-loss detection with explicit missingness should not be conflated with learned residual detection of value faults.
-3. Candidate online adaptation can be isolated and rolled back when an independent guard objective deteriorates.
+3. Candidate online adaptation can be isolated and rolled back when held-out guard loss deteriorates beyond tolerance.
 
 It does not establish architecture superiority, flight readiness, robotic functional safety, general anomaly-detection performance or deployment timing guarantees.
