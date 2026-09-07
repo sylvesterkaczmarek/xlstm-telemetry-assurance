@@ -1,0 +1,4 @@
+include Makefile requirements-reference.txt
+recursive-include docs *.md
+include results/benchmark/metrics.csv results/benchmark/summary.json
+include results/benchmark/run_environment.json results/benchmark/fault_detection_f1.png

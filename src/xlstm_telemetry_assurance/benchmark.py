@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import random
+import tempfile
 import time
 from pathlib import Path
 
@@ -11,7 +12,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from .data import build_windows, generate_clean_telemetry, inject_fault, prepare_observed_inputs, standardize
+from .data import (
+    build_windows, effective_missingness, generate_clean_telemetry, inject_fault,
+    prepare_observed_inputs, standardize,
+)
 from .metrics import binary_metrics, coverage, gaussian_nll, rmse
 from .models import LSTMForecaster, XLSTMForecaster, count_parameters
 from .provenance import configure_deterministic_execution, write_run_environment
@@ -54,6 +58,9 @@ def _benchmark_config(smoke: bool) -> dict:
         "adaptation_steps": 4 if smoke else 10,
         "adaptation_learning_rate": 0.015,
         "adaptation_tolerance": 0.01,
+        "adaptation_split_fraction": 0.7,
+        "adaptation_split": "raw_timeline_before_windowing",
+        "adaptation_tolerance_rule": "after <= before + tolerance * abs(before)",
         "window_inference_latency_repeats": 120,
         "timing": _timing_metadata(sequence_length),
     }
@@ -89,7 +96,19 @@ def _score_stream(
     std: np.ndarray,
     threshold: float,
     seq_len: int,
+    *,
+    missingness_score_boost: float = 4.0,
 ) -> dict[str, float]:
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("threshold must be finite and nonnegative")
+    if not np.isfinite(missingness_score_boost) or missingness_score_boost < 0:
+        raise ValueError("missingness_score_boost must be finite and nonnegative")
+    missing = effective_missingness(observed, missing)
+    if clean.shape != observed.shape:
+        raise ValueError("clean and observed telemetry must have matching shapes")
+    fault_mask = np.asarray(fault_mask)
+    if fault_mask.shape != (len(clean),) or fault_mask.dtype.kind != "b":
+        raise ValueError("fault_mask must be a boolean vector matching the timeline")
     inputs, observed_std = prepare_observed_inputs(observed, missing, mean, std)
     clean_std = standardize(clean, mean, std)
     x, y_observed, indices = build_windows(inputs, observed_std, seq_len)
@@ -98,7 +117,7 @@ def _score_stream(
 
     # Runtime anomaly scoring uses only information actually available to the
     # system. The clean counterfactual is retained only for benchmark metrics.
-    standardized_residual = np.abs(y_observed - pred_mean) / np.maximum(pred_std, 1e-4)
+    standardized_residual = np.abs(y_observed.astype(np.float64) - pred_mean) / pred_std
     target_missing = missing[indices]
     available = ~target_missing
     residual_sum = np.sum(standardized_residual * available, axis=1)
@@ -108,7 +127,9 @@ def _score_stream(
     # Missing measurements are explicit telemetry faults. Their forward-filled
     # values are excluded from the residual and missingness is scored directly.
     miss_step = target_missing.any(axis=1).astype(np.float32)
-    scores = scores + 4.0 * miss_step
+    scores = scores + missingness_score_boost * miss_step
+    if not np.isfinite(scores).all():
+        raise FloatingPointError("nonfinite anomaly scores cannot be reported")
 
     labels = fault_mask[indices].astype(np.int64)
     preds = (scores > threshold).astype(np.int64)
@@ -141,26 +162,37 @@ def _scenario_row(
     }
 
 
-def _calibrate_threshold(model, clean, mean, std, seq_len):
+def _calibrate_threshold(model, clean, mean, std, seq_len, quantile=0.99):
+    if not np.isfinite(quantile) or not 0 < quantile < 1:
+        raise ValueError("calibration quantile must be between zero and one")
     missing = np.zeros_like(clean, dtype=bool)
     inputs, clean_std = prepare_observed_inputs(clean, missing, mean, std)
     x, y, _ = build_windows(inputs, clean_std, seq_len)
     pred_mean, pred_std = predict(model, x)
-    scores = np.mean(np.abs(y - pred_mean) / np.maximum(pred_std, 1e-4), axis=1)
-    return float(np.quantile(scores, 0.99))
+    scores = np.mean(np.abs(y.astype(np.float64) - pred_mean) / pred_std, axis=1)
+    threshold = float(np.quantile(scores, quantile))
+    if not np.isfinite(threshold):
+        raise FloatingPointError("nonfinite calibration threshold cannot be used")
+    return threshold
+
+
+def _adaptation_windows(inputs, targets, seq_len, fraction=0.7):
+    """Build buffers with no shared raw input or target timestamps."""
+    if not np.isfinite(fraction) or not 0 < fraction < 1:
+        raise ValueError("adaptation split fraction must be between zero and one")
+    split = int(len(inputs) * fraction)
+    adapt_x, adapt_y, _ = build_windows(inputs[:split], targets[:split], seq_len)
+    guard_x, guard_y, _ = build_windows(inputs[split:], targets[split:], seq_len)
+    return adapt_x, adapt_y, guard_x, guard_y
 
 
 def _adaptation_check(model, domain, seed, mean, std, seq_len, smoke=False):
     length = 360 if smoke else 720
     clean = generate_clean_telemetry(domain, length=length, seed=seed + 700)
     observed, missing, _ = inject_fault(clean, "drift", seed=seed + 900)
-    inputs, clean_std = prepare_observed_inputs(observed, missing, mean, std)
+    inputs, _ = prepare_observed_inputs(observed, missing, mean, std)
     clean_target = standardize(clean, mean, std)
-    x, _, _ = build_windows(inputs, clean_std, seq_len)
-    _, y, _ = build_windows(inputs, clean_target, seq_len)
-    split = int(len(x) * 0.7)
-    adapt_x, adapt_y = x[:split], y[:split]
-    guard_x, guard_y = x[split:], y[split:]
+    adapt_x, adapt_y, guard_x, guard_y = _adaptation_windows(inputs, clean_target, seq_len)
     result = guarded_adaptation(
         model,
         adapt_x,
@@ -175,6 +207,19 @@ def _adaptation_check(model, domain, seed, mean, std, seq_len, smoke=False):
 
 
 def run_benchmark(output: Path, smoke: bool = False) -> dict:
+    """Finish all computation and serialisation before replacing prior evidence."""
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".telemetry-run-", dir=output.parent) as directory:
+        staging = Path(directory)
+        summary = _run_benchmark(staging, smoke=smoke)
+        output.mkdir(parents=True, exist_ok=True)
+        for name in ("metrics.csv", "summary.json", "fault_detection_f1.png", "run_environment.json"):
+            (staging / name).replace(output / name)
+    return summary
+
+
+def _run_benchmark(output: Path, smoke: bool = False) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     config = _benchmark_config(smoke)
     deterministic_settings = configure_deterministic_execution()
@@ -209,7 +254,9 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                 _seed_everything(seed)
                 model = factory()
                 train_model(model, train_x, train_y, epochs=epochs, lr=config["training_learning_rate"])
-                threshold = _calibrate_threshold(model, calibration, mean, std, seq_len)
+                threshold = _calibrate_threshold(
+                    model, calibration, mean, std, seq_len, quantile=config["calibration_quantile"]
+                )
 
                 clean_obs = test_clean.copy()
                 clean_missing = np.zeros_like(test_clean, dtype=bool)
@@ -224,6 +271,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                     std,
                     threshold,
                     seq_len,
+                    missingness_score_boost=config["missingness_score_boost"],
                 )
                 window_latency = _window_inference_latency_ms(
                     model,
@@ -258,6 +306,7 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                         std,
                         threshold,
                         seq_len,
+                        missingness_score_boost=config["missingness_score_boost"],
                     )
                     rows.append(
                         _scenario_row(
@@ -281,6 +330,8 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
                         "recall": "",
                         "false_alarm_rate": "",
                         "adaptation_accepted": adaptation.accepted,
+                        "guard_loss_before": adaptation.guard_loss_before,
+                        "guard_loss_after": adaptation.guard_loss_after,
                     }
                 )
 
@@ -299,19 +350,54 @@ def run_benchmark(output: Path, smoke: bool = False) -> dict:
         "parameters",
         "window_inference_latency_ms",
         "adaptation_accepted",
+        "guard_loss_before",
+        "guard_loss_after",
     ]
-    with (output / "metrics.csv").open("w", newline="") as f:
+    summary = _summarize(rows, timing_metadata=config["timing"])
+    summary_json = json.dumps(summary, indent=2, allow_nan=False) + "\n"
+    with (output / "metrics.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    summary = _summarize(rows, timing_metadata=config["timing"])
-    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    (output / "summary.json").write_text(summary_json, encoding="utf-8")
     _plot_fault_f1(rows, output / "fault_detection_f1.png")
     return summary
 
 
 def _summarize_model_rows(selected: list[dict]) -> dict:
+    if not selected:
+        raise ValueError("cannot summarise an empty model cohort")
+    identities = {(r["domain"], r["model"]) for r in selected}
+    if len(identities) != 1:
+        raise ValueError("a model cohort must share its domain and model")
+    required = set(FAULTS) | {"clean", "adaptation"}
+    by_seed: dict[int, set[str]] = {}
+    for row in selected:
+        seed, scenario = row["seed"], row["scenario"]
+        if type(seed) is not int or not 0 <= seed < 2**32:
+            raise ValueError("each row must identify a valid integer seed")
+        seen = by_seed.setdefault(seed, set())
+        if scenario not in required or scenario in seen:
+            raise ValueError("unknown or duplicate seed/scenario row")
+        seen.add(scenario)
+        numeric_keys = ("window_inference_latency_ms", "parameters")
+        if scenario == "adaptation":
+            if type(row["adaptation_accepted"]) is not bool:
+                raise ValueError("adaptation_accepted must be a boolean")
+            numeric_keys += tuple(key for key in ("guard_loss_before", "guard_loss_after") if key in row)
+        else:
+            numeric_keys += ("rmse", "coverage_90", "gaussian_nll")
+            if scenario == "clean":
+                numeric_keys += ("false_alarm_rate",)
+            else:
+                numeric_keys += ("f1",)
+        for key in numeric_keys:
+            value = row[key]
+            if type(value) not in (int, float) or not np.isfinite(value):
+                raise ValueError(f"{key} must be a finite number")
+    if any(scenarios != required for scenarios in by_seed.values()):
+        raise ValueError("each seed must contain every benchmark scenario")
     clean = [r for r in selected if r["scenario"] == "clean"]
     faults = [r for r in selected if r["scenario"] in FAULTS]
     packet_loss = [r for r in selected if r["scenario"] == "packet_loss"]
@@ -323,11 +409,14 @@ def _summarize_model_rows(selected: list[dict]) -> dict:
         for fault in FAULTS
     }
     return {
+        "seed_count": len(by_seed),
         "clean_rmse_mean": float(np.mean([float(r["rmse"]) for r in clean])),
-        "clean_rmse_std": float(np.std([float(r["rmse"]) for r in clean])),
+        "clean_rmse_std": float(np.std([float(r["rmse"]) for r in clean], ddof=1 if len(clean) > 1 else 0)),
         "clean_coverage_90_mean": float(np.mean([float(r["coverage_90"]) for r in clean])),
         "clean_gaussian_nll_mean": float(np.mean([float(r["gaussian_nll"]) for r in clean])),
-        "clean_gaussian_nll_std": float(np.std([float(r["gaussian_nll"]) for r in clean])),
+        "clean_gaussian_nll_std": float(
+            np.std([float(r["gaussian_nll"]) for r in clean], ddof=1 if len(clean) > 1 else 0)
+        ),
         "fault_gaussian_nll_mean": float(np.mean([float(r["gaussian_nll"]) for r in faults])),
         "fault_f1_mean": float(np.mean([float(r["f1"]) for r in faults])),
         "packet_loss_f1_mean": float(np.mean([float(r["f1"]) for r in packet_loss])),
@@ -349,6 +438,7 @@ def _summarize(rows: list[dict], timing_metadata: dict | None = None) -> dict:
     summary: dict = {
         "_metadata": {
             "schema_version": 2,
+            "uncertainty": "sample standard deviation across distinct seeds; zero for a single-seed smoke run",
             "timing": timing_metadata,
             "fault_reporting": {
                 "packet_loss": "uses an explicit missingness signal and is not purely residual-based detection",
@@ -404,7 +494,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     summary = run_benchmark(args.output, smoke=args.smoke)
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2, allow_nan=False))
 
 
 if __name__ == "__main__":

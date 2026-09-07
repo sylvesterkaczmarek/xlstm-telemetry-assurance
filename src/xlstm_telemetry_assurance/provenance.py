@@ -57,12 +57,20 @@ def _run_git(repo_root: Path, *args: str) -> str | None:
 
 
 def _discover_git_root() -> Path | None:
-    candidates = [Path.cwd(), Path(__file__).resolve().parent]
-    for candidate in candidates:
-        root = _run_git(candidate, "rev-parse", "--show-toplevel")
-        if root:
-            return Path(root)
-    return None
+    # The caller's working directory can belong to a completely different
+    # project. Even the package location can be in that project's untracked
+    # virtual environment, so require the executed module to be tracked.
+    module = Path(__file__).resolve()
+    root_text = _run_git(module.parent, "rev-parse", "--show-toplevel")
+    if root_text is None:
+        return None
+    root = Path(root_text).resolve()
+    try:
+        relative_module = module.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    tracked = _run_git(root, "ls-files", "--error-unmatch", "--", relative_module)
+    return root if tracked is not None else None
 
 
 def _git_state(repo_root: Path | None = None) -> dict[str, Any]:
@@ -79,8 +87,17 @@ def _git_state(repo_root: Path | None = None) -> dict[str, Any]:
 
     return {
         "available": False,
-        "commit_sha": os.environ.get("GITHUB_SHA"),
+        "commit_sha": None,
         "dirty": None,
+    }
+
+
+def _source_hashes() -> dict[str, str]:
+    """Identify the package source, including uncommitted or installed files."""
+    package = Path(__file__).resolve().parent
+    return {
+        path.relative_to(package.parent).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(package.rglob("*.py"))
     }
 
 
@@ -102,7 +119,9 @@ def _cpu_model() -> str:
 
 
 def _fingerprint(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -116,6 +135,7 @@ def collect_run_environment(
     payload: dict[str, Any] = {
         "schema_version": RUN_ENVIRONMENT_SCHEMA_VERSION,
         "git": _git_state(repo_root),
+        "source_sha256": _source_hashes(),
         "python": {
             "version": platform.python_version(),
             "implementation": platform.python_implementation(),
@@ -154,5 +174,6 @@ def write_run_environment(
         deterministic_settings,
         repo_root=repo_root,
     )
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    serialized = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    path.write_text(serialized, encoding="utf-8")
     return payload

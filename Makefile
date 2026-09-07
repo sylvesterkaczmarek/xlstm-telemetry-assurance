@@ -1,7 +1,7 @@
 .PHONY: install test smoke benchmark clean
 
 install:
-	python -m pip install -e .[dev]
+	python -m pip install -e ".[dev]"
 
 test:
 	python -m pytest

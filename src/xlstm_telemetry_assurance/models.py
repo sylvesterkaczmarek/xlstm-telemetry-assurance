@@ -5,9 +5,21 @@ from torch import nn
 import torch.nn.functional as F
 
 
+def _positive_size(name: str, value: int) -> None:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _forecast_input(x: torch.Tensor, channels: int) -> None:
+    if x.ndim != 3 or x.shape[0] == 0 or x.shape[1] == 0 or x.shape[2] != channels * 2:
+        raise ValueError("input must have nonempty shape (batch, time, 2 * channels)")
+
+
 class GaussianHead(nn.Module):
     def __init__(self, hidden_size: int, channels: int, residual: bool = True) -> None:
         super().__init__()
+        _positive_size("channels", channels)
+        _positive_size("hidden_size", hidden_size)
         self.channels = channels
         self.residual = residual
         self.proj = nn.Linear(hidden_size, channels * 2)
@@ -23,11 +35,14 @@ class GaussianHead(nn.Module):
 class LSTMForecaster(nn.Module):
     def __init__(self, channels: int, hidden_size: int = 32) -> None:
         super().__init__()
+        _positive_size("channels", channels)
+        _positive_size("hidden_size", hidden_size)
         self.channels = channels
         self.lstm = nn.LSTM(input_size=channels * 2, hidden_size=hidden_size, batch_first=True)
         self.head = GaussianHead(hidden_size, channels)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        _forecast_input(x, self.channels)
         output, _ = self.lstm(x)
         hidden = output[:, -1]
         last_value = x[:, -1, : self.channels]
@@ -45,6 +60,8 @@ class StabilizedSLSTMCell(nn.Module):
 
     def __init__(self, input_size: int, hidden_size: int) -> None:
         super().__init__()
+        _positive_size("input_size", input_size)
+        _positive_size("hidden_size", hidden_size)
         self.hidden_size = hidden_size
         self.x_proj = nn.Linear(input_size, hidden_size * 4)
         self.h_proj = nn.Linear(hidden_size, hidden_size * 4, bias=False)
@@ -68,23 +85,31 @@ class StabilizedSLSTMCell(nn.Module):
         o = torch.sigmoid(o_raw)
 
         m_new = torch.maximum(i_log, f_log + m)
-        i = torch.exp(torch.clamp(i_log - m_new, min=-20.0, max=0.0))
-        f = torch.exp(torch.clamp(f_log + m - m_new, min=-20.0, max=0.0))
+        i = torch.exp(i_log - m_new)
+        f = torch.exp(f_log + m - m_new)
         c_new = f * c + i * z
         n_new = f * n + i
-        normalized = c_new / torch.clamp(n_new, min=1e-6)
+        # From the empty state, at least one stabilised gate is exactly one,
+        # so the normaliser is >= 1. Artificial gate/denominator floors would
+        # change the recurrence and suppress legitimate small input gates.
+        normalized = c_new / n_new
         h_new = o * normalized
         return h_new, (h_new, c_new, n_new, m_new)
 
     def initial_state(self, batch_size: int, device: torch.device, dtype: torch.dtype):
+        _positive_size("batch_size", batch_size)
         zeros = torch.zeros(batch_size, self.hidden_size, device=device, dtype=dtype)
-        neg_inf = torch.full_like(zeros, -20.0)
+        # No previous memory contributes to the first step. This makes its
+        # stabiliser equal to i_log for every finite input-gate value.
+        neg_inf = torch.full_like(zeros, -torch.inf)
         return zeros, zeros, zeros, neg_inf
 
 
 class XLSTMForecaster(nn.Module):
     def __init__(self, channels: int, hidden_size: int = 32) -> None:
         super().__init__()
+        _positive_size("channels", channels)
+        _positive_size("hidden_size", hidden_size)
         self.channels = channels
         self.input_norm = nn.LayerNorm(channels * 2)
         self.cell = StabilizedSLSTMCell(channels * 2, hidden_size)
@@ -92,6 +117,7 @@ class XLSTMForecaster(nn.Module):
         self.head = GaussianHead(hidden_size, channels)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        _forecast_input(x, self.channels)
         x_norm = self.input_norm(x)
         state = self.cell.initial_state(x.shape[0], x.device, x.dtype)
         hidden = state[0]

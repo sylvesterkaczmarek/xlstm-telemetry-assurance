@@ -1,8 +1,11 @@
 {
   "benchmark": {
     "adaptation_learning_rate": 0.015,
+    "adaptation_split": "raw_timeline_before_windowing",
+    "adaptation_split_fraction": 0.7,
     "adaptation_steps": 10,
     "adaptation_tolerance": 0.01,
+    "adaptation_tolerance_rule": "after <= before + tolerance * abs(before)",
     "calibration_quantile": 0.99,
     "domains": [
       "spacecraft",
@@ -47,8 +50,8 @@
     "window_inference_latency_repeats": 120
   },
   "cpu": {
-    "logical_cores": 5,
-    "model": "AMD EPYC 9V74 80-Core Processor"
+    "logical_cores": 9,
+    "model": "x86_64"
   },
   "determinism": {
     "cuda_used": false,
@@ -58,11 +61,11 @@
     "torch_num_interop_threads": 1,
     "torch_num_threads": 1
   },
-  "environment_fingerprint_sha256": "07909c0b522420c91fdad7b62318c9e74d41e04ef01bcc185978fe21b3f547d2",
+  "environment_fingerprint_sha256": "f66af02ace35ac854ac9fba229d8b0a71d3b51b4ea3d8a06b76dc54a351e701e",
   "git": {
-    "available": false,
-    "commit_sha": "e3a5d04359f3b285c0566df2b5fc86ddfe20cf84",
-    "dirty": null
+    "available": true,
+    "commit_sha": "99bd237c05988effffabff0da4ff4660b0ddc6ef",
+    "dirty": true
   },
   "packages": {
     "matplotlib": "3.10.8",
@@ -77,7 +80,16 @@
   "python": {
     "executable": "python",
     "implementation": "CPython",
-    "version": "3.13.5"
+    "version": "3.12.13"
   },
-  "schema_version": 1
+  "schema_version": 1,
+  "source_sha256": {
+    "xlstm_telemetry_assurance/__init__.py": "0a26f608ea9f836a5cdfdc43f007b6b2fc50f3f1a2cea32499cc66a94d661e24",
+    "xlstm_telemetry_assurance/benchmark.py": "3eedf3741a4840a6c4bf2f4726bdd7592a188d4e86b5c2241784656276d66edb",
+    "xlstm_telemetry_assurance/data.py": "4b56f1f5b2c1e9843f6347ebcb079e14b4ec9925aff5dcab484ed2c4db22b41e",
+    "xlstm_telemetry_assurance/metrics.py": "20e27f7aab4cac091bb64d9e2dc7c9c901da3e665a9b647c2949482c2e27d2df",
+    "xlstm_telemetry_assurance/models.py": "7a3568b752229e2f0ac2b99b9055203b2a6576135457dad781888ce86e121e60",
+    "xlstm_telemetry_assurance/provenance.py": "346ad23080e18943ddfd3006fa4eb0f85ef119fe1e70ab316197907ef85789fb",
+    "xlstm_telemetry_assurance/training.py": "0e5ef88d278fc13aa2c0f4b3504f13027cbfb5a8d9810ed89263ca51d31dbad8"
+  }
 }
